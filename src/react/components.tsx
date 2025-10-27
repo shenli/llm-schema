@@ -6,6 +6,17 @@ import type {
   SchemaDefinition,
   SchemaOutput
 } from '../schema/types';
+import {
+  isArrayField,
+  isBooleanField,
+  isDateField,
+  isEntityField,
+  isEnumField,
+  isMarkdownField,
+  isNumberField,
+  isObjectField,
+  isTextField
+} from '../schema/typeGuards';
 
 type FieldComponentProps = {
   value: unknown;
@@ -40,7 +51,7 @@ const defaultComponents: RendererComponents = {
       <pre>{String(value ?? '')}</pre>
     </div>
   ),
-  number: ({ value }) => <span>{value}</span>,
+  number: ({ value }) => <span>{String(value ?? '')}</span>,
   boolean: ({ value }) => <span>{value ? 'Yes' : 'No'}</span>,
   date: ({ value }) => {
     if (value instanceof Date) {
@@ -82,66 +93,65 @@ function renderFieldValue(
     </div>
   );
 
-  switch (field.kind) {
-    case 'text':
-      return renderPrimitive('text');
-    case 'markdown':
-      return renderPrimitive('markdown');
-    case 'number':
-      return renderPrimitive('number');
-    case 'boolean':
-      return renderPrimitive('boolean');
-    case 'date':
-      return renderPrimitive('date');
-    case 'enum':
-      return renderPrimitive('enum');
-    case 'entity':
-      return renderPrimitive('entity');
-    case 'array': {
-      const items = Array.isArray(value) ? value : [];
-      return (
-        <div className="llm-schema-field" data-kind="array" data-path={path}>
-          <dt>{label}</dt>
-          <dd>
-            {items.length === 0 ? (
-              <em>No entries</em>
-            ) : (
-              <ol>
-                {items.map((item, index) => (
-                  <li key={index}>
-                    {renderNestedFields(
-                      field.itemDefinition,
-                      item as Record<string, unknown>,
-                      `${path}.${index}`,
-                      components,
-                      config
-                    )}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </dd>
-        </div>
-      );
-    }
-    case 'object': {
-      return (
-        <div className="llm-schema-field" data-kind="object" data-path={path}>
-          <dt>{label}</dt>
-          <dd>
-            {renderNestedFields(field.shape, (value as Record<string, unknown>) ?? {}, path, components, config)}
-          </dd>
-        </div>
-      );
-    }
-    default:
-      return renderPrimitive('text');
+  if (isTextField(field)) return renderPrimitive('text');
+  if (isMarkdownField(field)) return renderPrimitive('markdown');
+  if (isNumberField(field)) return renderPrimitive('number');
+  if (isBooleanField(field)) return renderPrimitive('boolean');
+  if (isDateField(field)) return renderPrimitive('date');
+  if (isEnumField(field)) return renderPrimitive('enum');
+  if (isEntityField(field)) return renderPrimitive('entity');
+
+  if (isArrayField(field)) {
+    const items = Array.isArray(value) ? value : [];
+    return (
+      <div className="llm-schema-field" data-kind="array" data-path={path}>
+        <dt>{label}</dt>
+        <dd>
+          {items.length === 0 ? (
+            <em>No entries</em>
+          ) : (
+            <ol>
+              {items.map((item, index) => (
+                <li key={index}>
+                  {renderNestedFields(
+                    field.itemDefinition,
+                    (item as Record<string, unknown>) ?? {},
+                    `${path}.${index}`,
+                    components,
+                    config
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </dd>
+      </div>
+    );
   }
+
+  if (isObjectField(field)) {
+    return (
+      <div className="llm-schema-field" data-kind="object" data-path={path}>
+        <dt>{label}</dt>
+        <dd>
+          {renderNestedFields(
+            field.shape,
+            (value && typeof value === 'object' ? (value as Record<string, unknown>) : {}) ?? {},
+            path,
+            components,
+            config
+          )}
+        </dd>
+      </div>
+    );
+  }
+
+  return renderPrimitive('text');
 }
 
 function renderNestedFields(
   definition: SchemaDefinition,
-  data: Record<string, unknown>,
+  data: unknown,
   parentPath: string,
   components: RendererComponents,
   config?: RendererConfig
@@ -151,11 +161,14 @@ function renderNestedFields(
     return <em>Empty</em>;
   }
 
+  const record: Record<string, unknown> =
+    data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+
   return (
     <dl>
       {entries.map(([key, childField]) => {
         const path = parentPath ? `${parentPath}.${key}` : key;
-        const value = (data as Record<string, unknown>)[key];
+        const value = record[key];
 
         if (isHidden(path, config)) {
           return null;
@@ -206,7 +219,7 @@ export function SchemaRenderer<Definition extends SchemaDefinition>({
 
   return (
     <div className={`llm-schema-renderer llm-schema-renderer--${config?.layout ?? 'stack'}`}>
-      {renderNestedFields(schema.getDefinition(), data as Record<string, unknown>, '', mergedComponents, config)}
+      {renderNestedFields(schema.getDefinition(), data, '', mergedComponents, config)}
     </div>
   );
 }
@@ -247,20 +260,23 @@ export interface SchemaEditorProps<Definition extends SchemaDefinition> {
   validationIssues?: ParseIssue[];
 }
 
-function updatePathValue<T extends Record<string, unknown>>(source: T, path: string[], value: unknown): T {
-  if (path.length === 0) return source;
+function updatePathValue(source: unknown, path: string[], nextValue: unknown): unknown {
+  if (path.length === 0) return nextValue;
 
   const [head, ...rest] = path;
-  const clone: Record<string, unknown> = Array.isArray(source) ? [...(source as unknown[])] : { ...source };
 
-  if (rest.length === 0) {
-    clone[head] = value as never;
-    return clone as T;
+  if (Array.isArray(source)) {
+    const index = Number(head);
+    const clone = [...source];
+    clone[index] = updatePathValue(clone[index], rest, nextValue);
+    return clone;
   }
 
-  const current = (clone[head] ?? {}) as Record<string, unknown>;
-  clone[head] = updatePathValue(current, rest, value);
-  return clone as T;
+  const record: Record<string, unknown> =
+    source && typeof source === 'object' ? { ...(source as Record<string, unknown>) } : {};
+
+  record[head] = updatePathValue(record[head], rest, nextValue);
+  return record;
 }
 
 function serializeJson(value: unknown) {
@@ -280,113 +296,130 @@ export function SchemaEditor<Definition extends SchemaDefinition>({
   const handleChange = React.useCallback(
     (path: string, value: unknown) => {
       const parts = path.split('.').filter(Boolean);
-      const updated = updatePathValue(data as Record<string, unknown>, parts, value) as SchemaOutput<Definition>;
+      const updated = updatePathValue(data, parts, value) as SchemaOutput<Definition>;
       onChange(updated);
     },
     [data, onChange]
   );
 
   const renderInput = (field: AnyFieldDefinition, value: unknown, path: string) => {
-    switch (field.kind) {
-      case 'text':
-      case 'entity':
-        return (
-          <input
-            type="text"
-            disabled={disabled}
-            value={value ?? ''}
-            onChange={(event) => handleChange(path, event.target.value)}
-          />
-        );
-      case 'markdown':
-        return (
-          <textarea
-            disabled={disabled}
-            value={value ?? ''}
-            rows={6}
-            onChange={(event) => handleChange(path, event.target.value)}
-          />
-        );
-      case 'number':
-        return (
-          <input
-            type="number"
-            disabled={disabled}
-            value={value ?? ''}
-            onChange={(event) => {
-              const next = event.target.value === '' ? undefined : Number(event.target.value);
-              handleChange(path, Number.isNaN(next as number) ? undefined : next);
-            }}
-          />
-        );
-      case 'boolean':
-        return (
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={Boolean(value)}
-            onChange={(event) => handleChange(path, event.target.checked)}
-          />
-        );
-      case 'date': {
-        const format = field.options.format === 'date' ? 'date' : 'datetime-local';
-        const inputValue =
-          value instanceof Date
-            ? field.options.format === 'date'
-              ? value.toISOString().slice(0, 10)
-              : value.toISOString().slice(0, 16)
-            : typeof value === 'string'
-              ? value
-              : '';
-        return (
-          <input
-            type={format}
-            disabled={disabled}
-            value={inputValue}
-            onChange={(event) => {
-              const next = event.target.value;
-              handleChange(path, next ? new Date(next) : undefined);
-            }}
-          />
-        );
-      }
-      case 'enum':
-        return (
-          <select
-            disabled={disabled}
-            value={(value as string | undefined) ?? ''}
-            onChange={(event) => handleChange(path, event.target.value)}
-          >
-            <option value="" disabled>
-              Select…
-            </option>
-            {field.values.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        );
-      case 'array':
-      case 'object':
-        return (
-          <textarea
-            disabled={disabled}
-            value={serializeJson(value)}
-            rows={8}
-            onChange={(event) => {
-              try {
-                const parsed = JSON.parse(event.target.value);
-                handleChange(path, parsed);
-              } catch {
-                // ignore parse errors, leave current data intact
-              }
-            }}
-          />
-        );
-      default:
-        return <input disabled value={String(value ?? '')} onChange={() => undefined} />;
+    if (isTextField(field) || isEntityField(field)) {
+      const inputValue = typeof value === 'string' ? value : '';
+      return (
+        <input
+          type="text"
+          disabled={disabled}
+          value={inputValue}
+          onChange={(event) => handleChange(path, event.target.value)}
+        />
+      );
     }
+
+    if (isMarkdownField(field)) {
+      const inputValue = typeof value === 'string' ? value : '';
+      return (
+        <textarea
+          disabled={disabled}
+          value={inputValue}
+          rows={6}
+          onChange={(event) => handleChange(path, event.target.value)}
+        />
+      );
+    }
+
+    if (isNumberField(field)) {
+      const inputValue = typeof value === 'number' ? value : '';
+      return (
+        <input
+          type="number"
+          disabled={disabled}
+          value={inputValue}
+          onChange={(event) => {
+            const nextRaw = event.target.value;
+            if (nextRaw === '') {
+              handleChange(path, undefined);
+              return;
+            }
+            const next = Number(nextRaw);
+            handleChange(path, Number.isNaN(next) ? undefined : next);
+          }}
+        />
+      );
+    }
+
+    if (isBooleanField(field)) {
+      return (
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={Boolean(value)}
+          onChange={(event) => handleChange(path, event.target.checked)}
+        />
+      );
+    }
+
+    if (isDateField(field)) {
+      const format = field.options.format === 'date' ? 'date' : 'datetime-local';
+      const inputValue =
+        value instanceof Date
+          ? field.options.format === 'date'
+            ? value.toISOString().slice(0, 10)
+            : value.toISOString().slice(0, 16)
+          : typeof value === 'string'
+            ? value
+            : '';
+      return (
+        <input
+          type={format}
+          disabled={disabled}
+          value={inputValue}
+          onChange={(event) => {
+            const next = event.target.value;
+            handleChange(path, next ? new Date(next) : undefined);
+          }}
+        />
+      );
+    }
+
+    if (isEnumField(field)) {
+      const selected = typeof value === 'string' ? value : '';
+      return (
+        <select
+          disabled={disabled}
+          value={selected}
+          onChange={(event) => handleChange(path, event.target.value)}
+        >
+          <option value="" disabled>
+            Select…
+          </option>
+          {field.values.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      );
+    }
+
+    if (isArrayField(field) || isObjectField(field)) {
+      return (
+        <textarea
+          disabled={disabled}
+          value={serializeJson(value)}
+          rows={8}
+          onChange={(event) => {
+            try {
+              const parsed = JSON.parse(event.target.value);
+              handleChange(path, parsed);
+            } catch {
+              // ignore parse errors, leave current data intact
+            }
+          }}
+        />
+      );
+    }
+
+    return <input disabled value={String(value ?? '')} onChange={() => undefined} />;
   };
 
   const issuesByPath = React.useMemo(() => {

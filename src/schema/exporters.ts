@@ -8,6 +8,17 @@ import {
   type SchemaDefinition,
   type SchemaOptions
 } from './types';
+import {
+  isArrayField,
+  isBooleanField,
+  isDateField,
+  isEntityField,
+  isEnumField,
+  isMarkdownField,
+  isNumberField,
+  isObjectField,
+  isTextField
+} from './typeGuards';
 
 function applyDescription(schema: JsonSchema, description?: string): JsonSchema {
   if (description) {
@@ -17,95 +28,97 @@ function applyDescription(schema: JsonSchema, description?: string): JsonSchema 
 }
 
 function fieldToJsonSchema(field: SchemaDefinition[string]): JsonSchema {
-  switch (field.kind) {
-    case 'text':
-      return applyDescription(
-        {
-          type: 'string',
-          minLength: field.options.minLength,
-          maxLength: field.options.maxLength,
-          pattern: field.options.pattern?.source
-        },
-        field.description
-      );
-
-    case 'markdown':
-      return applyDescription(
-        {
-          type: 'string',
-          maxLength: field.options.maxLength,
-          format: 'markdown'
-        },
-        field.description ?? 'Markdown content'
-      );
-
-    case 'number':
-      return applyDescription(
-        {
-          type: 'number',
-          minimum: field.options.min,
-          maximum: field.options.max
-        },
-        field.description
-      );
-
-    case 'boolean':
-      return applyDescription(
-        {
-          type: 'boolean'
-        },
-        field.description
-      );
-
-    case 'date':
-      return applyDescription(
-        {
-          type: 'string',
-          format: field.options.format === 'date' ? 'date' : 'date-time'
-        },
-        field.description
-      );
-
-    case 'enum':
-      return applyDescription(
-        {
-          type: 'string',
-          enum: [...field.values]
-        },
-        field.description ?? `One of: ${field.values.join(', ')}`
-      );
-
-    case 'entity':
-      return applyDescription(
-        {
-          type: 'string'
-        },
-        field.description ?? `Entity reference (${field.entityType})`
-      );
-
-    case 'array': {
-      const typedField = field as ArrayFieldDefinition<any, any>;
-      const itemSchema = definitionToJsonSchema(typedField.itemDefinition, { strict: true });
-      const arrayOptions = field.options as ArrayFieldOptions;
-      return applyDescription(
-        {
-          type: 'array',
-          items: itemSchema,
-          minItems: arrayOptions.minItems,
-          maxItems: arrayOptions.maxItems
-        },
-        field.description
-      );
-    }
-
-    case 'object': {
-      const typedField = field as ObjectFieldDefinition<any, any>;
-      return applyDescription(definitionToJsonSchema(typedField.shape, { strict: true }), field.description);
-    }
-
-    default:
-      return { type: 'string' };
+  if (isTextField(field)) {
+    return applyDescription(
+      {
+        type: 'string',
+        minLength: field.options.minLength,
+        maxLength: field.options.maxLength,
+        pattern: field.options.pattern?.source
+      },
+      field.description
+    );
   }
+
+  if (isMarkdownField(field)) {
+    return applyDescription(
+      {
+        type: 'string',
+        maxLength: field.options.maxLength,
+        format: 'markdown'
+      },
+      field.description ?? 'Markdown content'
+    );
+  }
+
+  if (isNumberField(field)) {
+    return applyDescription(
+      {
+        type: 'number',
+        minimum: field.options.min,
+        maximum: field.options.max
+      },
+      field.description
+    );
+  }
+
+  if (isBooleanField(field)) {
+    return applyDescription(
+      {
+        type: 'boolean'
+      },
+      field.description
+    );
+  }
+
+  if (isDateField(field)) {
+    return applyDescription(
+      {
+        type: 'string',
+        format: field.options.format === 'date' ? 'date' : 'date-time'
+      },
+      field.description
+    );
+  }
+
+  if (isEnumField(field)) {
+    return applyDescription(
+      {
+        type: 'string',
+        enum: [...field.values]
+      },
+      field.description ?? `One of: ${field.values.join(', ')}`
+    );
+  }
+
+  if (isEntityField(field)) {
+    return applyDescription(
+      {
+        type: 'string'
+      },
+      field.description ?? `Entity reference (${field.entityType})`
+    );
+  }
+
+  if (isArrayField(field)) {
+    const itemSchema = definitionToJsonSchema(field.itemDefinition, { strict: true });
+    const arrayOptions = field.options as ArrayFieldOptions;
+    return applyDescription(
+      {
+        type: 'array',
+        items: itemSchema,
+        minItems: arrayOptions.minItems,
+        maxItems: arrayOptions.maxItems
+      },
+      field.description
+    );
+  }
+
+  if (isObjectField(field)) {
+    return applyDescription(definitionToJsonSchema(field.shape, { strict: true }), field.description);
+  }
+
+  return { type: 'string' };
 }
 
 export interface DefinitionToJsonOptions {

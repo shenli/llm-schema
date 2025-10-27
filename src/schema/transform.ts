@@ -1,5 +1,13 @@
 import type { Schema } from './builder';
 import type { MarkdownFieldDefinition, SchemaDefinition, SchemaOutput, SchemaValidationResult } from './types';
+import {
+  isArrayField,
+  isEntityField,
+  isMarkdownField,
+  isObjectField,
+  isTextField,
+  isEnumField
+} from './typeGuards';
 
 export interface DiffChange<T = unknown> {
   path: string;
@@ -68,7 +76,7 @@ export function diffSchemaData<Definition extends SchemaDefinition>(
       return;
     }
 
-    if (fieldDef.kind === 'array') {
+    if (isArrayField(fieldDef)) {
       const prevArray = Array.isArray(prevValue) ? prevValue : [];
       const nextArray = Array.isArray(nextValue) ? nextValue : [];
       const maxLength = Math.max(prevArray.length, nextArray.length);
@@ -89,7 +97,7 @@ export function diffSchemaData<Definition extends SchemaDefinition>(
       return;
     }
 
-    if (fieldDef.kind === 'object' && prevValue && nextValue) {
+    if (isObjectField(fieldDef) && prevValue && nextValue) {
       const nestedDefinition = fieldDef.shape;
       for (const key of Object.keys(nestedDefinition)) {
         walk(
@@ -137,7 +145,7 @@ export function mergeSchemaData<Definition extends SchemaDefinition>(
       return baseValue;
     }
 
-    if (fieldDef.kind === 'array') {
+    if (isArrayField(fieldDef)) {
       if (!Array.isArray(baseValue)) return updateValue;
       if (!Array.isArray(updateValue)) return baseValue;
 
@@ -147,9 +155,17 @@ export function mergeSchemaData<Definition extends SchemaDefinition>(
       return options.preferNewArrays ? updateValue : updateValue;
     }
 
-    if (fieldDef.kind === 'object') {
-      const result: Record<string, unknown> = { ...(baseValue as Record<string, unknown>) };
-      for (const [key, nestedField] of Object.entries(fieldDef.shape)) {
+    if (isObjectField(fieldDef)) {
+      const result: Record<string, unknown> = {
+        ...((baseValue && typeof baseValue === 'object' ? (baseValue as Record<string, unknown>) : {}) as Record<
+          string,
+          unknown
+        >)
+      };
+      for (const [key, nestedField] of Object.entries(fieldDef.shape) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
         result[key] = mergeField(
           nestedField,
           (baseValue as Record<string, unknown> | undefined)?.[key],
@@ -218,7 +234,7 @@ export function searchSchemaData<Definition extends SchemaDefinition>(
   function visit(field: SchemaDefinition[string], value: unknown, path: string) {
     if (value === undefined || value === null) return;
 
-    if (field.kind === 'text' || field.kind === 'entity' || field.kind === 'enum') {
+    if (isTextField(field) || isEntityField(field) || isEnumField(field)) {
       const stringValue = String(value);
       if (containsMatch(stringValue, query, caseSensitive)) {
         results.push({
@@ -230,8 +246,7 @@ export function searchSchemaData<Definition extends SchemaDefinition>(
       return;
     }
 
-    if (field.kind === 'markdown') {
-      if (options.matchMarkdown === false) return;
+    if (isMarkdownField(field) && options.matchMarkdown !== false) {
       const stringValue = String(value);
       if (containsMatch(stringValue, query, caseSensitive)) {
         results.push({
@@ -243,18 +258,26 @@ export function searchSchemaData<Definition extends SchemaDefinition>(
       return;
     }
 
-    if (field.kind === 'array' && Array.isArray(value)) {
-      value.forEach((item, index) => {
-        for (const [key, nestedField] of Object.entries(field.itemDefinition)) {
-          visit(nestedField, (item as Record<string, unknown>)[key], joinPath(joinPath(path, index), key));
-        }
-      });
-      return;
-    }
+    if (isArrayField(field) && Array.isArray(value)) {
+    value.forEach((item, index) => {
+      const child = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      for (const [key, nestedField] of Object.entries(field.itemDefinition) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(joinPath(path, index), key));
+      }
+    });
+    return;
+  }
 
-    if (field.kind === 'object' && typeof value === 'object' && value) {
-      for (const [key, nestedField] of Object.entries(field.shape)) {
-        visit(nestedField, (value as Record<string, unknown>)[key], joinPath(path, key));
+    if (isObjectField(field) && typeof value === 'object' && value) {
+      const child = value as Record<string, unknown>;
+      for (const [key, nestedField] of Object.entries(field.shape) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(path, key));
       }
     }
   }
@@ -284,7 +307,7 @@ export function extractEntities<Definition extends SchemaDefinition>(
   function visit(field: SchemaDefinition[string], value: unknown, path: string) {
     if (value === undefined || value === null) return;
 
-    if (field.kind === 'entity') {
+    if (isEntityField(field)) {
       if (!filterType || field.entityType === filterType) {
         results.push({
           path,
@@ -295,18 +318,26 @@ export function extractEntities<Definition extends SchemaDefinition>(
       return;
     }
 
-    if (field.kind === 'array' && Array.isArray(value)) {
-      value.forEach((item, index) => {
-        for (const [key, nestedField] of Object.entries(field.itemDefinition)) {
-          visit(nestedField, (item as Record<string, unknown>)[key], joinPath(joinPath(path, index), key));
-        }
-      });
-      return;
-    }
+    if (isArrayField(field) && Array.isArray(value)) {
+    value.forEach((item, index) => {
+      const child = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      for (const [key, nestedField] of Object.entries(field.itemDefinition) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(joinPath(path, index), key));
+      }
+    });
+    return;
+  }
 
-    if (field.kind === 'object' && value && typeof value === 'object') {
-      for (const [key, nestedField] of Object.entries(field.shape)) {
-        visit(nestedField, (value as Record<string, unknown>)[key], joinPath(path, key));
+    if (isObjectField(field) && value && typeof value === 'object') {
+      const child = value as Record<string, unknown>;
+      for (const [key, nestedField] of Object.entries(field.shape) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(path, key));
       }
     }
   }
@@ -334,27 +365,36 @@ export function collectMarkdownFields<Definition extends SchemaDefinition>(
   function visit(field: SchemaDefinition[string], value: unknown, path: string) {
     if (value === undefined || value === null) return;
 
-    if (field.kind === 'markdown') {
+    if (isMarkdownField(field)) {
+      const markdownField: MarkdownFieldDefinition<boolean> = field;
       records.push({
         path,
         value: String(value),
-        field: field as MarkdownFieldDefinition<boolean>
+        field: markdownField
       });
       return;
     }
 
-    if (field.kind === 'array' && Array.isArray(value)) {
-      value.forEach((item, index) => {
-        for (const [key, nestedField] of Object.entries(field.itemDefinition)) {
-          visit(nestedField, (item as Record<string, unknown>)[key], joinPath(joinPath(path, index), key));
-        }
-      });
-      return;
-    }
+    if (isArrayField(field) && Array.isArray(value)) {
+    value.forEach((item, index) => {
+      const child = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      for (const [key, nestedField] of Object.entries(field.itemDefinition) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(joinPath(path, index), key));
+      }
+    });
+    return;
+  }
 
-    if (field.kind === 'object' && value && typeof value === 'object') {
-      for (const [key, nestedField] of Object.entries(field.shape)) {
-        visit(nestedField, (value as Record<string, unknown>)[key], joinPath(path, key));
+    if (isObjectField(field) && value && typeof value === 'object') {
+      const child = value as Record<string, unknown>;
+      for (const [key, nestedField] of Object.entries(field.shape) as Array<[
+        string,
+        SchemaDefinition[string]
+      ]>) {
+        visit(nestedField, child[key], joinPath(path, key));
       }
     }
   }
