@@ -113,6 +113,18 @@ export interface TextFieldOptions extends BaseFieldOptions {
 
 export interface MarkdownFieldOptions extends TextFieldOptions {
   allowHtml?: boolean;
+  allowedMarkdown?: {
+    bold?: boolean;
+    italic?: boolean;
+    lists?: boolean;
+    headers?: boolean;
+    links?: boolean;
+    images?: boolean;
+    code?: boolean;
+    quote?: boolean;
+  };
+  toolbar?: string[];
+  livePreview?: boolean;
 }
 
 export interface NumberFieldOptions extends BaseFieldOptions {

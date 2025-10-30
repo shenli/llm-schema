@@ -124,7 +124,18 @@ const MeetingNotesSchema = defineSchema(
       description: 'Meeting summary in markdown',
       optional: true,
       maxLength: 2000,
-      note: 'markdown without h1 headings, max 2000 chars'
+      note: 'markdown without h1 headings, max 2000 chars',
+      allowedMarkdown: {
+        bold: true,
+        italic: true,
+        lists: true,
+        headers: true,
+        links: false,
+        images: false,
+        code: true
+      },
+      toolbar: ['bold', 'italic', 'bulletList', 'numberedList', 'code'],
+      livePreview: true
     }),
 
     actionItems: array({
