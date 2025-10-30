@@ -7,6 +7,8 @@ Define once. Generate prompts. Parse responses. Render beautifully.
 [Documentation](#documentation) • [Quick Start](#quick-start) • [Examples](#examples) • [Contributing](#contributing)
 
 ```
+
+`structure` defaults to `'typescript'`; switch to `'json'` for placeholder-style output instead of TypeScript hints.
 Your App Flow:
 ┌──────────────────────────────────────────────────────────────────┐
 │  1. You write domain logic        "Analyze this meeting..."      │
@@ -113,38 +115,38 @@ import {
 
 const MeetingNotesSchema = defineSchema(
   {
-    title: text({ 
-      description: 'Concise meeting title' 
+    title: text({
+      description: 'Meeting title',
+      note: 'max 100 chars'
     }),
-    
+
     summary: md({
-      description: 'High-level recap with **markdown** support',
+      description: 'Meeting summary in markdown',
       optional: true,
-      maxLength: 2000
+      maxLength: 2000,
+      note: 'markdown without h1 headings, max 2000 chars'
     }),
-    
+
     actionItems: array({
-      description: 'Concrete actions with owners',
+      description: 'Action items with owners',
+      minItems: 1,
       schema: {
-        task: text({ description: 'What needs to happen' }),
-        owner: entity('person', { description: 'Person responsible' }),
-        status: enumType(['todo', 'in-progress', 'done'] as const, {
-          description: 'Current status',
-          default: 'todo'
-        }),
-        dueDate: date({ optional: true, format: 'date' })
+        task: text({ description: 'Specific and actionable task' }),
+        owner: entity('person', { description: 'Contact ID or @handle' }),
+        completed: boolean({ default: false, optional: true })
       }
     }),
-    
+
     sentiment: enumType(['positive', 'neutral', 'negative'] as const, {
       description: 'Overall meeting sentiment'
     }),
-    
-    confidence: number({ 
-      description: 'Confidence score (0-1)', 
-      min: 0, 
-      max: 1, 
-      optional: true 
+
+    confidence: number({
+      description: 'Confidence score (0-1)',
+      min: 0,
+      max: 1,
+      optional: true,
+      note: 'typically 0.5-1.0' 
     })
   },
   {
@@ -164,8 +166,11 @@ type MeetingNotes = InferSchema<typeof MeetingNotesSchema>;
 // Generate the response structure part
 const responseFormat = MeetingNotesSchema.toPrompt({
   format: 'detailed',
-  includeExamples: true
+  includeExamples: true,
+  structure: 'typescript'
 });
+
+// structure can be set to 'json' if you prefer a placeholder JSON example instead of TypeScript-style hints.
 
 // Build your complete prompt: domain instructions + response structure
 const fullPrompt = `You are an expert meeting analyst. Extract key information from meeting transcripts.
@@ -183,41 +188,25 @@ Analyze the meeting transcript and return valid JSON.`;
 **Concrete example of generated response format:**
 
 ```
-RESPONSE FORMAT:
-
-Return a JSON object with the following structure:
+Respond with JSON matching this schema:
 
 {
-  "title": string (required)
-    Description: Concise meeting title
-
-  "summary": markdown string (optional, max 2000 characters)  
-    Description: High-level recap with **markdown** support
-    Note: Use markdown formatting - headers (##), bold (**text**), lists, etc.
-
-  "actionItems": array (required)
-    Description: Concrete actions with owners
-    Items: [{
-      "task": string (required) - What needs to happen
-      "owner": person entity (required) - Person responsible (email, name, or ID)
-      "status": enum (required) - Must be one of: "todo", "in-progress", "done" (default: "todo")
-      "dueDate": ISO date string (optional) - Format: YYYY-MM-DD
-    }]
-
-  "sentiment": enum (required)
-    Description: Overall meeting sentiment
-    Must be exactly one of: "positive", "neutral", "negative"
-
-  "confidence": number (optional, range: 0-1)
-    Description: Confidence score (0-1)
+  "title": string,                     // Meeting title, max 100 chars
+  "summary"?: string,                  // Markdown without h1 headings, max 2000 chars
+  "actionItems": [                     // Action items with owners, min 1 item
+    {
+      "task": string,                  // Specific and actionable task
+      "owner": string,                 // Contact ID or @handle
+      "completed"?: boolean
+    }
+  ],
+  "priority"?: "high" | "medium" | "low", // pick the top priority level
+  "durationMinutes"?: number,          // typically 15-120, range 0-480
+  "scheduledFor"?: string              // YYYY-MM-DD format
 }
 
-CRITICAL ENUM VALUES:
-- sentiment: Only use "positive", "neutral", or "negative"
-- status: Only use "todo", "in-progress", or "done"
-
-EXAMPLE:
-{
+Required fields: title, actionItems
+```
   "title": "Q4 Planning",
   "sentiment": "positive",
   "actionItems": [{

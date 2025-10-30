@@ -13,6 +13,7 @@ export interface BaseFieldOptions {
   description?: string;
   optional?: boolean;
   required?: boolean;
+  note?: string;
 }
 
 export interface ParseContext {
@@ -55,6 +56,7 @@ export interface SchemaOptions {
 
 export interface SchemaPromptOptions extends PromptRenderOptions {
   format?: 'detailed' | 'compact';
+  structure?: 'json' | 'typescript';
 }
 
 export type SchemaValidationResult<T> =
