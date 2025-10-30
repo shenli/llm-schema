@@ -1,8 +1,6 @@
 import {
-  type ArrayFieldDefinition,
   type AnthropicToolOptions,
   type JsonSchema,
-  type ObjectFieldDefinition,
   type OpenAIToolOptions,
   type SchemaDefinition,
   type SchemaOptions,
@@ -26,6 +24,17 @@ import {
   type EntityRecord,
   type MarkdownFieldRecord
 } from './transform';
+import {
+  isArrayField,
+  isBooleanField,
+  isDateField,
+  isEntityField,
+  isEnumField,
+  isMarkdownField,
+  isNumberField,
+  isObjectField,
+  isTextField
+} from './typeGuards';
 
 export interface Schema<Definition extends SchemaDefinition> {
   readonly definition: Definition;
@@ -62,32 +71,268 @@ function normalizeOptions(options?: SchemaOptions): Required<SchemaOptions> {
   };
 }
 
-function renderFieldPrompt(
-  fieldName: string,
-  definition: SchemaDefinition[string],
-  options: SchemaPromptOptions,
-  indent = 2
-): string {
+function getRequiredFields(definition: SchemaDefinition): string[] {
+  return Object.entries(definition)
+    .filter(([, field]) => !field.optional)
+    .map(([key]) => key);
+}
+
+function buildFieldComment(field: SchemaDefinition[string], mode: 'json' | 'typescript'): string {
+  const segments: string[] = [];
+
+  if (mode === 'json' && field.optional) {
+    segments.push('optional');
+  }
+
+  if (field.description) {
+    const desc = field.description.endsWith('.') ? field.description : `${field.description}`;
+    segments.push(desc);
+  }
+
+  const note = (field as { options?: { note?: string } }).options?.note;
+  const noteText = note?.toLowerCase() ?? '';
+  if (note) {
+    segments.push(note);
+  }
+
+  if (isEnumField(field)) {
+    // Union type already communicates allowed values; no need to repeat.
+  }
+
+  if (isNumberField(field) && !/range|min|max/.test(noteText)) {
+    const range: string[] = [];
+    if (field.options.min !== undefined) range.push(`min ${field.options.min}`);
+    if (field.options.max !== undefined) range.push(`max ${field.options.max}`);
+    if (range.length > 0) {
+      segments.push(`range ${range.join(', ')}`);
+    }
+  }
+
+  if (isArrayField(field) && !/min|max/.test(noteText)) {
+    const constraints: string[] = [];
+    if (field.options.minItems !== undefined) constraints.push(`min ${field.options.minItems} item${field.options.minItems === 1 ? '' : 's'}`);
+    if (field.options.maxItems !== undefined) constraints.push(`max ${field.options.maxItems} items`);
+    if (constraints.length > 0) {
+      segments.push(constraints.join(', '));
+    }
+  }
+
+  if ((isMarkdownField(field) || isTextField(field)) && !/max\s+\d+/.test(noteText)) {
+    const lengths: string[] = [];
+    if ('minLength' in field.options && field.options.minLength !== undefined) {
+      lengths.push(`min ${field.options.minLength} chars`);
+    }
+    if (field.options.maxLength !== undefined) {
+      lengths.push(`max ${field.options.maxLength} chars`);
+    }
+    if (lengths.length > 0) {
+      segments.push(lengths.join(', '));
+    }
+  }
+
+  const uniqueSegments = segments.filter(Boolean).reduce<string[]>((acc, segment) => {
+    if (!acc.includes(segment)) acc.push(segment);
+    return acc;
+  }, []);
+
+  return uniqueSegments.join(', ').trim();
+}
+
+function renderTypeScriptValueLines(field: SchemaDefinition[string], indent: number): string[] {
   const indentSpace = ' '.repeat(indent);
-  let line = `${indentSpace}- ${definition.toPrompt(fieldName, options)}`;
 
-  if (definition.kind === 'array') {
-    const nested = (definition as ArrayFieldDefinition<any, any>).itemDefinition;
-    const inner = (Object.entries(nested) as Array<[string, SchemaDefinition[string]]>)
-      .map(([childName, childField]) => renderFieldPrompt(childName, childField as SchemaDefinition[string], options, indent + 2))
-      .join('\n');
-    line += `\n${indentSpace}  Items:\n${inner}`;
+  if (isTextField(field) || isMarkdownField(field) || isEntityField(field)) {
+    return ['string'];
   }
 
-  if (definition.kind === 'object') {
-    const nested = (definition as ObjectFieldDefinition<any, any>).shape;
-    const inner = (Object.entries(nested) as Array<[string, SchemaDefinition[string]]>)
-      .map(([childName, childField]) => renderFieldPrompt(childName, childField as SchemaDefinition[string], options, indent + 2))
-      .join('\n');
-    line += `\n${indentSpace}  Fields:\n${inner}`;
+  if (isNumberField(field)) {
+    return ['number'];
   }
 
-  return line;
+  if (isBooleanField(field)) {
+    return ['boolean'];
+  }
+
+  if (isDateField(field)) {
+    return ['string'];
+  }
+
+  if (isEnumField(field)) {
+    return [field.values.map((value) => `"${value}"`).join(' | ')];
+  }
+
+  if (isArrayField(field)) {
+    const lines = ['['];
+    const itemLines = renderTypeScriptObjectLines(field.itemDefinition, indent + 2);
+    lines.push(...itemLines);
+    lines.push(`${indentSpace}]`);
+    return lines;
+  }
+
+  if (isObjectField(field)) {
+    return renderTypeScriptObjectLines(field.shape, indent);
+  }
+
+  return ['null'];
+}
+
+function renderTypeScriptEntryLines(
+  key: string,
+  field: SchemaDefinition[string],
+  indent: number,
+  isLast: boolean
+): string[] {
+  const indentSpace = ' '.repeat(indent);
+  const optionalMark = field.optional ? '?' : '';
+  const valueLines = renderTypeScriptValueLines(field, indent + 2);
+  const comment = buildFieldComment(field, 'typescript');
+
+  if (valueLines.length === 1) {
+    const baseLine = `${indentSpace}"${key}"${optionalMark}: ${valueLines[0]}${isLast ? '' : ','}`;
+    return comment ? [`${baseLine} // ${comment}`] : [baseLine];
+  }
+
+  const [firstLine, ...rest] = valueLines;
+  const lines: string[] = [`${indentSpace}"${key}"${optionalMark}: ${firstLine}`];
+
+  if (rest.length > 0) {
+    const middle = rest.slice(0, -1);
+    middle.forEach((line) => lines.push(line));
+
+    const lastValueLine = rest[rest.length - 1];
+    if (comment) {
+      lines[0] = `${lines[0]} // ${comment}`;
+      lines.push(`${lastValueLine}${isLast ? '' : ','}`);
+    } else {
+      lines.push(`${lastValueLine}${isLast ? '' : ','}`);
+    }
+    return lines;
+  }
+
+  if (comment) {
+    lines[0] = `${lines[0]} // ${comment}`;
+  }
+
+  return lines;
+}
+
+function renderTypeScriptObjectLines(definition: SchemaDefinition, indent: number): string[] {
+  const indentSpace = ' '.repeat(indent);
+  const entries = Object.entries(definition) as Array<[
+    string,
+    SchemaDefinition[string]
+  ]>;
+
+  if (entries.length === 0) {
+    return [`${indentSpace}{}`,];
+  }
+
+  const lines: string[] = [`${indentSpace}{`];
+
+  entries.forEach(([key, field], index) => {
+    const entryLines = renderTypeScriptEntryLines(key, field, indent + 2, index === entries.length - 1);
+    lines.push(...entryLines);
+  });
+
+  lines.push(`${indentSpace}}`);
+  return lines;
+}
+
+function renderTypeScriptStructure(definition: SchemaDefinition): string {
+  return renderTypeScriptObjectLines(definition, 0).join('\n');
+}
+
+function renderJsonValueLines(field: SchemaDefinition[string], indent: number): string[] {
+  const indentSpace = ' '.repeat(indent);
+
+  if (isTextField(field) || isMarkdownField(field) || isEntityField(field)) {
+    return [`${indentSpace}"<string>"`];
+  }
+
+  if (isNumberField(field)) {
+    return [`${indentSpace}0`];
+  }
+
+  if (isBooleanField(field)) {
+    return [`${indentSpace}true`];
+  }
+
+  if (isDateField(field)) {
+    const placeholder = field.options.format === 'date' ? '<YYYY-MM-DD>' : '<ISO-8601 date-time>';
+    return [`${indentSpace}"${placeholder}"`];
+  }
+
+  if (isEnumField(field)) {
+    return [`${indentSpace}"<${field.values.join(' | ')}>"`];
+  }
+
+  if (isArrayField(field)) {
+    const lines = [`${indentSpace}[`];
+    const itemLines = renderJsonObjectLines(field.itemDefinition, indent + 2);
+    lines.push(...itemLines);
+    lines.push(`${indentSpace}]`);
+    return lines;
+  }
+
+  if (isObjectField(field)) {
+    return renderJsonObjectLines(field.shape, indent);
+  }
+
+  return [`${indentSpace}null`];
+}
+
+function renderJsonEntryLines(
+  key: string,
+  field: SchemaDefinition[string],
+  indent: number,
+  isLast: boolean
+): string[] {
+  const indentSpace = ' '.repeat(indent);
+  const valueLines = renderJsonValueLines(field, indent + 2);
+  const comment = buildFieldComment(field, 'json');
+
+  if (valueLines.length === 1) {
+    const baseLine = `${indentSpace}"${key}": ${valueLines[0].trim()}${isLast ? '' : ','}`;
+    return comment ? [`${baseLine} // ${comment}`] : [baseLine];
+  }
+
+  const [firstLine, ...rest] = valueLines;
+  const lines: string[] = [`${indentSpace}"${key}": ${firstLine.trimStart()}`];
+
+  if (rest.length > 0) {
+    const middle = rest.slice(0, -1);
+    middle.forEach((line) => lines.push(line));
+    const lastValueLine = rest[rest.length - 1];
+    lines.push(`${lastValueLine}${isLast ? '' : ','}${comment ? ` // ${comment}` : ''}`);
+  }
+
+  return lines;
+}
+
+function renderJsonObjectLines(definition: SchemaDefinition, indent: number): string[] {
+  const indentSpace = ' '.repeat(indent);
+  const entries = Object.entries(definition) as Array<[
+    string,
+    SchemaDefinition[string]
+  ]>;
+
+  if (entries.length === 0) {
+    return [`${indentSpace}{}`];
+  }
+
+  const lines: string[] = [`${indentSpace}{`];
+
+  entries.forEach(([key, field], index) => {
+    const entryLines = renderJsonEntryLines(key, field, indent + 2, index === entries.length - 1);
+    lines.push(...entryLines);
+  });
+
+  lines.push(`${indentSpace}}`);
+  return lines;
+}
+
+function renderJsonStructure(definition: SchemaDefinition): string {
+  return renderJsonObjectLines(definition, 0).join('\n');
 }
 
 function normalizeInput(input: unknown): SchemaValidationResult<Record<string, unknown>> {
@@ -161,23 +406,29 @@ export function defineSchema<const Definition extends SchemaDefinition>(
     },
 
     toPrompt(promptOptions: SchemaPromptOptions = {}) {
+      const structureStyle = promptOptions.structure ?? 'typescript';
       const header =
-        promptOptions.format === 'compact'
-          ? `Return JSON that follows the "${normalized.name}" schema.`
-          : `Please respond with JSON that matches the "${normalized.name}" schema.`;
+        structureStyle === 'json'
+          ? 'Return a JSON object matching this structure:'
+          : 'Respond with JSON matching this schema:';
+      const description = normalized.description ? `\n\n${normalized.description}` : '';
+      const body =
+        structureStyle === 'json'
+          ? renderJsonStructure(definition)
+          : renderTypeScriptStructure(definition);
+      const requiredFields = getRequiredFields(definition);
 
-      const description = normalized.description ? `\n${normalized.description}` : '';
+      const sections: string[] = [`${header}${description}\n\n${body}`];
 
-      const fieldDescriptions = Object.entries(definition)
-        .map(([name, field]) => renderFieldPrompt(name, field, promptOptions))
-        .join('\n');
+      if (requiredFields.length > 0) {
+        sections.push(`\n\nRequired fields: ${requiredFields.join(', ')}`);
+      }
 
-      const examplesText =
-        normalized.examples.length > 0 && promptOptions.includeExamples
-          ? `\n\nExample:\n${JSON.stringify(normalized.examples[0], null, 2)}`
-          : '';
+      if (normalized.examples.length > 0 && promptOptions.includeExamples) {
+        sections.push(`\n\nExample:\n${JSON.stringify(normalized.examples[0], null, 2)}`);
+      }
 
-      return `${header}${description}\n\nFields:\n${fieldDescriptions}${examplesText}`;
+      return sections.join('');
     },
 
     toJsonSchema() {

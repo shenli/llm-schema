@@ -72,7 +72,8 @@ function formatLabel(key: string) {
 }
 
 function isHidden(path: string, config?: RendererConfig) {
-  return config?.hiddenFields?.includes(path) ?? false;
+  if (!config?.hiddenFields?.length) return false;
+  return config.hiddenFields.some((hidden) => path === hidden || path.startsWith(`${hidden}.`));
 }
 
 function renderFieldValue(
@@ -438,105 +439,111 @@ export function SchemaEditor<Definition extends SchemaDefinition>({
 
   return (
     <form className={`llm-schema-editor llm-schema-editor--${config?.layout ?? 'stack'}`}>
-      {renderNestedFields(definition, data as Record<string, unknown>, '', {
-        ...defaultComponents,
-        text: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        markdown: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        number: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        boolean: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field llm-schema-editor-field--boolean">
-            <label>
-              <input
-                type="checkbox"
-                disabled={disabled}
-                checked={Boolean(value)}
-                onChange={(event) => handleChange(fieldPath, event.target.checked)}
-              />
-              <span>{label}</span>
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        date: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        enum: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        ),
-        entity: ({ value, field, path: fieldPath, label }) => (
-          <div className="llm-schema-editor-field">
-            <label>
-              <span>{label}</span>
-              {renderInput(field, value, fieldPath)}
-            </label>
-            {issuesByPath.get(fieldPath)?.map((issue, index) => (
-              <p key={index} className="llm-schema-editor-error">
-                {issue.message}
-              </p>
-            ))}
-          </div>
-        )
-      })}
+      {renderNestedFields(
+        definition,
+        data as Record<string, unknown>,
+        '',
+        {
+          ...defaultComponents,
+          text: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          markdown: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          number: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          boolean: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field llm-schema-editor-field--boolean">
+              <label>
+                <input
+                  type="checkbox"
+                  disabled={disabled}
+                  checked={Boolean(value)}
+                  onChange={(event) => handleChange(fieldPath, event.target.checked)}
+                />
+                <span>{label}</span>
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          date: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          enum: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          ),
+          entity: ({ value, field, path: fieldPath, label }) => (
+            <div className="llm-schema-editor-field">
+              <label>
+                <span>{label}</span>
+                {renderInput(field, value, fieldPath)}
+              </label>
+              {issuesByPath.get(fieldPath)?.map((issue, index) => (
+                <p key={index} className="llm-schema-editor-error">
+                  {issue.message}
+                </p>
+              ))}
+            </div>
+          )
+        },
+        config
+      )}
     </form>
   );
 }

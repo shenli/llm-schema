@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server';
 import {
   SchemaEditor,
   SchemaRenderer,
+  generateEditForm,
   useSchemaValidation,
   defineSchema,
   text,
@@ -75,5 +76,25 @@ describe('React helpers', () => {
 
     const html = renderToString(<HookHarness />);
     expect(html).toContain('&quot;success&quot;:true');
+  });
+
+  test('generateEditForm restricts fields and renders editors', () => {
+    const data = {
+      title: 'Launch Notes',
+      summary: 'Draft',
+      tags: 'docs',
+      contributors: [{ name: 'alice', active: true }]
+    };
+
+    const form = generateEditForm(DemoSchema, {
+      value: data,
+      onChange: () => void 0,
+      fields: ['title', 'tags']
+    });
+
+    const html = renderToString(form);
+    expect(html).toContain('Title');
+    expect(html).toContain('select');
+    expect(html).not.toContain('Contributors');
   });
 });

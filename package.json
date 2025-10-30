@@ -1,6 +1,6 @@
 {
   "name": "llm-schema",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The ORM for LLM content. Type-safe schemas, validation, and prompt utilities for LLM-native apps.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

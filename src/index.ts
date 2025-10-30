@@ -30,7 +30,8 @@ export {
   SchemaField,
   SchemaEditor,
   useSchemaData,
-  useSchemaValidation
+  useSchemaValidation,
+  generateEditForm
 } from './react';
 
 export type {
@@ -39,7 +40,8 @@ export type {
   RendererConfig,
   SchemaFieldProps,
   SchemaEditorProps,
-  SchemaDataState
+  SchemaDataState,
+  GenerateEditFormOptions
 } from './react';
 
 export {
