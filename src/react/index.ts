@@ -9,3 +9,6 @@ export type {
 
 export { useSchemaData, useSchemaValidation } from './hooks';
 export type { SchemaDataState } from './hooks';
+
+export { generateEditForm } from './editForm';
+export type { GenerateEditFormOptions } from './editForm';

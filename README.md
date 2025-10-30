@@ -552,6 +552,7 @@ import {
 } from 'llm-schema/react';
 ```
 
+### Generate Edit Forms\n\n```tsx\nimport { generateEditForm } from 'llm-schema/react';\n\nconst EditForm = generateEditForm(AccountApproachSchema, {\n  value: recommendation,\n  onChange: setRecommendation,\n  fields: ['emailBody', 'talkingPoints']\n});\n```\n\nThis helper renders the right editor for each schema field (markdown split-pane, dynamic arrays, numbers, etc.).\n\n---\n
 ---
 
 ## How It Compares
