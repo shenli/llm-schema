@@ -41,7 +41,7 @@ describe('React helpers', () => {
 
     const html = renderToString(<SchemaRenderer schema={DemoSchema} data={data} />);
     expect(html).toContain('Launch Notes');
-    expect(html).toContain('Highlights');
+    expect(html).toContain('<li>New features</li>');
     expect(html).toContain('Contributors');
   });
 
@@ -96,5 +96,26 @@ describe('React helpers', () => {
     expect(html).toContain('Title');
     expect(html).toContain('select');
     expect(html).not.toContain('Contributors');
+  });
+
+  test('SchemaRenderer supports custom markdown renderer override', () => {
+    const data = {
+      title: 'Launch Notes',
+      summary: 'Draft summary',
+      tags: 'docs',
+      contributors: [{ name: 'alice', active: true }]
+    };
+
+    const html = renderToString(
+      <SchemaRenderer
+        schema={DemoSchema}
+        data={data}
+        markdownRenderer={(md) => <article data-testid="custom-md">{md.toUpperCase()}</article>}
+      />
+    );
+
+    expect(html).toContain('data-testid="custom-md"');
+    expect(html).toContain('DRAFT SUMMARY');
+    expect(html).not.toContain('<pre>');
   });
 });

@@ -6,6 +6,32 @@
 
 **llm-schema** is a TypeScript library that provides a complete lifecycle solution for working with semi-structured content from Large Language Models (LLMs). 
 
+### Real problem this solves
+
+Building AI features today is fragile and repetitive.
+
+For every new LLM-powered feature (meeting notes, call analysis, customer feedback digests, etc.) teams repeat the same steps:
+
+- Manually describe the expected JSON structure in the prompt
+- Hope the model follows it
+- JSON.parse() and write custom validation logic
+- Write React components to display the result
+- Write React forms to edit/correct the result
+
+Every time the shape changes, you touch the prompt, the parser, the validator, the UI, and the edit form. They drift and break.
+
+llm-schema makes the schema the source of truth.
+You declare the shape once, and get:
+
+- LLM response instructions / tool schema
+- Parser + validator with helpful errors and optional repair
+- Typed data in TypeScript
+- React renderer + editor that understands both structured fields and markdown
+
+Also: real-world AI output is not purely structured. Some data should stay flexible, human, richly formatted. That's why markdown is a first-class field type (`md()`), not an afterthought. The library treats markdown as "LLM writes this for humans to read," and treats `text()`, `enumType()`, `date()`, etc. as "data we want to automate on."
+
+This becomes the emotional anchor for the entire design doc.
+
 ### Official Branding
 
 ```
