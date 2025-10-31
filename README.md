@@ -2,395 +2,301 @@
 
 **The ORM for LLM Content**
 
-Define once. Generate prompts. Parse responses. Render beautifully.
+Define once. Use everywhere.
 
-[Documentation](#documentation) • [Quick Start](#quick-start) • [Examples](#examples) • [Contributing](#contributing)
+[Quick Start](#quick-start) • [API Reference](#api-reference) • [Design Doc](docs/llm-schema-design.md)
 
-```
+## Why this exists
 
-`structure` defaults to `'typescript'`; switch to `'json'` for placeholder-style output instead of TypeScript hints.
-Your App Flow:
-┌──────────────────────────────────────────────────────────────────┐
-│  1. You write domain logic        "Analyze this meeting..."      │
-│  2. llm-schema adds structure     + schema.toPrompt()            │
-│  3. Send to LLM                   → OpenAI / Anthropic / etc.    │
-│  4. llm-schema parses response    schema.parse(response)         │
-│  5. Render with components        <SchemaRenderer data={...} />  │
-└──────────────────────────────────────────────────────────────────┘
+Today, shipping an AI feature in a real product is annoying:
+- You define the output structure you wish the LLM would follow
+- You write a long prompt describing every field
+- You JSON.parse() the model output and pray
+- You write validation by hand
+- You build a React component to render it
+- You build an edit form so humans can fix it
 
-        ┌─────────────────────────────────────────┐
-        │         llm-schema provides:            │
-        ├─────────────────────────────────────────┤
-        │  • Schema → Response Format             │
-        │  • Parsing & Validation                 │
-        │  • TypeScript Types                     │
-        │  • React Components                     │
-        └─────────────────────────────────────────┘
-```
+Every time the shape changes, you update all of those places manually. Things drift. Bugs slip in. Stop JSON.parse() + hope.
 
----
+llm-schema fixes that.
 
-## Why llm-schema?
+You define your schema once, and that single source of truth gives you:
+- Prompt instructions / tool schemas for the LLM
+- A parser with validation + helpful errors (and optional auto-repair)
+- Fully typed data in TypeScript
+- A ready-to-use React renderer (and editor)
 
-Building with LLMs means wrestling with inconsistent outputs, writing custom parsers, and recreating UI components for every schema. **llm-schema** eliminates this friction by treating your data structure as the single source of truth.
+You stop gluing these pieces together by hand.
 
-```typescript
-// 1. Define your schema once
-const schema = defineSchema({ title: text(), summary: md(), ... });
-
-// 2. Generate response structure instructions
-const responseFormat = schema.toPrompt();
-
-// 3. Build your complete prompt (domain logic + response structure)
-const prompt = `
-You are an expert meeting analyst. Analyze the transcript and extract:
-- Key discussion points
-- Action items with clear owners
-- Overall meeting sentiment
-
-${responseFormat}
-`;
-
-// 4. Parse and validate LLM responses
-const data = schema.parse(llmResponse);
-
-// 5. Render with zero custom code
-<SchemaRenderer schema={schema} data={data} />
-```
-
-Just as **Prisma** and **Drizzle** abstract away database complexity, **llm-schema** abstracts away LLM integration complexity.
-
----
-
-## Features
-
-### 🎯 Schema-Driven Everything
-One definition powers prompts, validation, TypeScript types, React components, and data utilities.
-
-### 📝 First-Class Markdown
-`md()` fields retain rich formatting while staying type-safe. No more guessing how to render content.
-
-### 🔒 Enum Guardrails
-Constrain LLM outputs to specific values. The model sees the options in prompts, validation enforces them.
-
-### ⚛️ React Components Included
-Drop-in `<SchemaRenderer>` and `<SchemaEditor>` components with hooks for instant UI.
-
-### 🔄 Transformation Pipeline
-Built-in diff, merge, search, and entity extraction for building workflows and audit trails.
-
-### 🤝 Multi-Provider Support
-Export to OpenAI tools, Anthropic tools, or JSON Schema. Works with any LLM.
-
----
-
-## Installation
-
-```bash
-npm install llm-schema
-# or
-pnpm add llm-schema
-# or
-yarn add llm-schema
-```
-
----
-
-## Quick Start
-
-### 1. Define Your Schema
+### Define → prompt → parse → render
 
 ```typescript
 import {
   defineSchema,
-  text,
   md,
+  text,
   array,
   entity,
-  enumType,
   date,
-  number,
+  enumType
+} from 'llm-schema';
+import { SchemaRenderer, SchemaEditor } from 'llm-schema/react';
+
+// 1. Define the schema once
+const CallSummary = defineSchema({
+  summary: md("High-level meeting summary in markdown"),
+  actionItems: array({
+    schema: {
+      task: text("Specific action to take"),
+      owner: entity('person', "Person responsible"),
+      dueDate: date("YYYY-MM-DD deadline", { optional: true })
+    }
+  }),
+  sentiment: enumType(['positive', 'neutral', 'negative'], "Overall tone of the meeting")
+});
+
+// 2. Give the model structure-aware instructions
+const prompt = `
+You are a sales assistant. Summarize the call and extract action items.
+${CallSummary.toPrompt()}
+`;
+
+// 3. Parse with validation + helpful errors (or auto-repair)
+const response = await llm.generate({ prompt }); // call your favorite LLM client
+const parsed = CallSummary.safeParse(response);
+
+// 4. Render (or edit) with built-in React components
+export function CallSummaryView() {
+  if (!parsed.success) {
+    return <div>Surface parsed.issues to your team (or open SchemaEditor for manual fixes)</div>;
+  }
+
+  return <SchemaRenderer schema={CallSummary} data={parsed.data} />;
+}
+```
+
+Define once. Use everywhere.
+
+### Structured vs Markdown: you get both.
+
+In a real app, not everything should be rigidly structured JSON.
+
+Some fields must be strictly typed so you can automate on them:
+- owner, dueDate, priority, status, sentiment, dealStage
+
+Other fields should stay expressive and human, not squeezed into enums:
+- meeting summary
+- reasoning / rationale
+- objection handling notes
+- next-step narrative
+
+llm-schema makes that split explicit:
+- Use `text()`, `enumType()`, `date()`, `entity()`, etc. for structured data
+- Use `md()` for rich markdown content
+
+Markdown (`md()`) is treated as a first-class field type. The LLM is allowed to express itself with headers, bullet lists, bold text, etc. We render that markdown for you in React with zero extra work.
+
+This is the core idea: you keep strict structure where the app needs control, and you keep markdown where humans need richness — without writing five different layers of glue.
+
+### Single source of truth
+
+With llm-schema, the schema is the source of truth.
+
+From one schema definition, you get:
+- `schema.toPrompt()` — instructions for the LLM describing each field
+- `schema.toOpenAITool()` — tool / function calling schema
+- `schema.safeParse()` — validation + helpful error paths
+- `SchemaRenderer` / `SchemaEditor` — UI that knows how to display and edit each field type
+
+When you change the schema, everything updates together. No more “forgot to update the prompt” bugs or “UI is missing the new field” bugs.
+
+### What ships in v0.1
+
+- `defineSchema(...)` – declare your content model (structured fields + markdown fields in one place)
+- `toPrompt()` / `toOpenAITool()` – generate LLM-facing structure guidance and tool schemas automatically
+- `safeParse()` / `parseWithRepair()` – turn raw model output into validated, typed data with helpful error messages
+- `<SchemaRenderer />` – render the data (including markdown) in React with zero custom formatting
+- `<SchemaEditor />` (basic version) – editable form generated from the same schema
+
+Things like diff/merge/search, advanced entity resolution, schema versioning, etc. are part of the roadmap but not required for the first public release.
+
+### Helpful errors (not just "invalid")
+
+```json
+[
+  {
+    "path": "actionItems[0].priority",
+    "code": "invalid_enum_value",
+    "message": "Invalid priority value. Must be one of: high, medium, low",
+    "expected": ["high", "medium", "low"],
+    "received": "urgent"
+  }
+]
+```
+
+Instead of “failed to parse,” you get actionable, field-level feedback you can show in logs or even surface in your UI.
+
+## Features
+
+### 🎯 Schema-driven everything
+
+One schema powers prompt instructions, tool schemas, TypeScript types, parsing, and UI. Change the schema and the rest updates automatically.
+
+### 📝 First-class markdown
+
+`md()` keeps rich formatting alongside structured fields. The React renderer outputs headers, lists, emphasis, and callouts without extra work.
+
+### ✅ Validation + repair
+
+`schema.safeParse()` returns typed data or structured issues you can act on. `schema.parseWithRepair()` (opt-in) can fix common JSON hiccups before validation runs.
+
+### ⚛️ React components included
+
+Drop-in `<SchemaRenderer />` and `<SchemaEditor />` know how to display and edit every field type. Compose or override per field when you need custom behavior.
+
+### 🔌 Works with your LLM stack
+
+Export prompts, OpenAI tool definitions, Anthropic tool schemas, or vanilla JSON Schema. The ORM for LLM content plays nicely with any client or orchestrator.
+
+## Quick Start
+
+### 1. Define your schema
+
+```typescript
+import {
+  defineSchema,
+  md,
+  text,
+  array,
+  entity,
+  date,
+  enumType,
   type InferSchema
 } from 'llm-schema';
 
-const MeetingNotesSchema = defineSchema(
-  {
-    title: text({
-      description: 'Meeting title',
-      note: 'max 100 chars'
-    }),
-
-    summary: md({
-      description: 'Meeting summary in markdown',
-      optional: true,
-      maxLength: 2000,
-      note: 'markdown without h1 headings, max 2000 chars',
-      allowedMarkdown: {
-        bold: true,
-        italic: true,
-        lists: true,
-        headers: true,
-        links: false,
-        images: false,
-        code: true
-      },
-      toolbar: ['bold', 'italic', 'bulletList', 'numberedList', 'code'],
-      livePreview: true
-    }),
-
-    actionItems: array({
-      description: 'Action items with owners',
-      minItems: 1,
-      schema: {
-        task: text({ description: 'Specific and actionable task' }),
-        owner: entity('person', { description: 'Contact ID or @handle' }),
-        completed: boolean({ default: false, optional: true })
-      }
-    }),
-
-    sentiment: enumType(['positive', 'neutral', 'negative'] as const, {
-      description: 'Overall meeting sentiment'
-    }),
-
-    confidence: number({
-      description: 'Confidence score (0-1)',
-      min: 0,
-      max: 1,
-      optional: true,
-      note: 'typically 0.5-1.0' 
-    })
-  },
-  {
-    name: 'MeetingNotes',
-    description: 'Structured meeting summary with markdown and action tracking',
-    strict: true
-  }
-);
-
-// Get fully typed interface
-type MeetingNotes = InferSchema<typeof MeetingNotesSchema>;
-```
-
-### 2. Build Your Complete Prompt
-
-```typescript
-// Generate the response structure part
-const responseFormat = MeetingNotesSchema.toPrompt({
-  format: 'detailed',
-  includeExamples: true,
-  structure: 'typescript'
+const CallSummary = defineSchema({
+  summary: md("High-level meeting summary in markdown"),
+  actionItems: array({
+    schema: {
+      task: text("Specific action to take"),
+      owner: entity('person', "Person responsible"),
+      dueDate: date("YYYY-MM-DD deadline", { optional: true })
+    }
+  }),
+  sentiment: enumType(['positive', 'neutral', 'negative'], "Overall tone of the meeting")
 });
 
-// structure can be set to 'json' if you prefer a placeholder JSON example instead of TypeScript-style hints.
-
-// Build your complete prompt: domain instructions + response structure
-const fullPrompt = `You are an expert meeting analyst. Extract key information from meeting transcripts.
-
-Focus on:
-- Concrete action items with clear owners
-- Overall sentiment and key discussion points
-- Use markdown formatting in the summary (headers, bold text, lists)
-
-${responseFormat}
-
-Analyze the meeting transcript and return valid JSON.`;
+type CallSummaryData = InferSchema<typeof CallSummary>;
 ```
 
-**Concrete example of generated response format:**
+### The descriptions become prompt instructions
 
-```
-Respond with JSON matching this schema:
+Every string you pass into helpers like `text("Specific action to take")` or `md("High-level meeting summary in markdown")` is reused inside the generated prompt/tool schema. You describe the field once, and llm-schema turns it into guidance the model actually sees.
 
-{
-  "title": string,                     // Meeting title, max 100 chars
-  "summary"?: string,                  // Markdown without h1 headings, max 2000 chars
-  "actionItems": [                     // Action items with owners, min 1 item
-    {
-      "task": string,                  // Specific and actionable task
-      "owner": string,                 // Contact ID or @handle
-      "completed"?: boolean
-    }
-  ],
-  "priority"?: "high" | "medium" | "low", // pick the top priority level
-  "durationMinutes"?: number,          // typically 15-120, range 0-480
-  "scheduledFor"?: string              // YYYY-MM-DD format
-}
+```text
+Field: actionItems[].task
+- Specific action to take
 
-Required fields: title, actionItems
-```
-  "title": "Q4 Planning",
-  "sentiment": "positive",
-  "actionItems": [{
-    "task": "Draft budget proposal",
-    "owner": "sarah@company.com",
-    "status": "todo",
-    "dueDate": "2025-11-15"
-  }]
-}
+Field: actionItems[].owner
+- Person responsible
 ```
 
-The response format is **generated automatically** from your schema definition. You write your domain-specific instructions, and llm-schema handles the structure specification.
+Notes (`{ note: "max 100 chars" }`) and other metadata show up too, so the LLM is reminded about constraints like length, formatting, or optionality without you wiring any extra prose by hand.
 
-**Or use as a tool for function calling:**
+### 2. Build your prompt
 
 ```typescript
-const openaiTool = MeetingNotesSchema.toOpenAITool();
-const anthropicTool = MeetingNotesSchema.toAnthropicTool();
-const jsonSchema = MeetingNotesSchema.toJsonSchema();
+const structure = CallSummary.toPrompt({ structure: 'typescript' });
+
+const prompt = `
+You are a sales assistant. Extract actionable follow-up details.
+
+Return data that matches this schema:
+${structure}
+`;
 ```
 
-### 3. Use with Your LLM
+Prefer JSON placeholders? Pass `{ structure: 'json' }`.
+
+### 3. Call your LLM
 
 ```typescript
 import OpenAI from 'openai';
 
-const openai = new OpenAI();
+const client = new OpenAI();
 
-async function analyzeMeeting(transcript: string) {
-  const responseFormat = MeetingNotesSchema.toPrompt({ format: 'detailed' });
-  
-  // Your complete prompt = domain instructions + response format
-  const systemPrompt = `You are an expert meeting analyst. Extract structured information from meeting transcripts.
-
-Focus on:
-- Action items with clear ownership and deadlines
-- Overall meeting tone and key outcomes
-- Use markdown in the summary for better readability
-
-${responseFormat}`;
-
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+async function analyzeTranscript(transcript: string) {
+  const completion = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Analyze this meeting:\n\n${transcript}` }
+      { role: 'system', content: prompt },
+      { role: 'user', content: transcript }
     ],
     response_format: { type: 'json_object' }
   });
 
-  const raw = completion.choices[0].message?.content ?? '{}';
-  
-  // Parse with validation and detailed error messages
-  const result = MeetingNotesSchema.safeParse(raw);
-
-  if (!result.success) {
-    result.issues.forEach(issue => {
-      console.warn(`${issue.path.join('.')}: ${issue.message}`);
-    });
-    return null;
-  }
-
-  return result.data; // Fully typed MeetingNotes!
+  return completion.choices[0].message?.content ?? '{}';
 }
 ```
 
-### 4. Render Beautiful UI
+### 4. Parse (with safety) and render
 
-The LLM response might look like this:
-
-```json
-{
-  "title": "Q4 Product Planning",
-  "summary": "## Key Decisions\n\nWe finalized the **Q4 roadmap** with three major initiatives:\n\n1. **Mobile app redesign** - New UI/UX launching in November\n2. **API v2 release** - Breaking changes, migration guide ready\n3. **Enterprise features** - SSO and advanced analytics\n\n### Timeline\n\n- Nov 1: Design review\n- Nov 15: Beta release\n- Dec 1: General availability\n\n**Next meeting:** Progress check-in on Nov 8th",
-  "actionItems": [
-    {
-      "task": "Complete mobile app mockups",
-      "owner": "sarah@company.com",
-      "status": "in-progress",
-      "dueDate": "2025-11-01"
-    },
-    {
-      "task": "Write API v2 migration guide",
-      "owner": "james@company.com", 
-      "status": "todo",
-      "dueDate": "2025-11-10"
-    }
-  ],
-  "sentiment": "positive",
-  "confidence": 0.92
-}
-```
-
-**Render with zero custom code:**
-
-```tsx
+```typescript
 import { SchemaRenderer } from 'llm-schema/react';
 
-function MeetingNotesView({ data }: { data: MeetingNotes }) {
-  return (
-    <SchemaRenderer
-      schema={MeetingNotesSchema}
-      data={data}
-      config={{ 
-        layout: 'stack',
-        showOptionalFields: true 
-      }}
-    />
-  );
+const raw = await analyzeTranscript(transcript);
+
+// Choose strict or forgiving parsing
+const parsed = CallSummary.safeParse(raw);
+// const parsed = CallSummary.parseWithRepair(raw);
+
+if (!parsed.success) {
+  parsed.issues.forEach(issue => {
+    console.warn(issue.path.join('.'), issue.message);
+  });
+  throw new Error('Call summary is invalid');
 }
+
+<SchemaRenderer schema={CallSummary} data={parsed.data} />;
 ```
 
-**The rendered output looks like this:**
+### Markdown rendering (built-in)
 
----
+`md()` fields automatically render through [`react-markdown`](https://github.com/remarkjs/react-markdown) with GitHub-flavored markdown support. No extra setup or peer dependencies required — it ships inside `llm-schema`.
 
-**Title:** Q4 Product Planning
+```tsx
+<SchemaRenderer schema={CallSummary} data={parsed.data} />
+```
 
-**Summary:**
+Need different styling? Override the renderer:
 
-## Key Decisions
+```tsx
+<SchemaRenderer
+  schema={CallSummary}
+  data={parsed.data}
+  markdownRenderer={(md) => <MyMarkdown content={md} />}
+/>;
+```
 
-We finalized the **Q4 roadmap** with three major initiatives:
+The default renderer escapes raw HTML, supports tables, lists, and checklists, and applies a `.llm-schema-markdown` wrapper you can style however you like.
 
-1. **Mobile app redesign** - New UI/UX launching in November
-2. **API v2 release** - Breaking changes, migration guide ready
-3. **Enterprise features** - SSO and advanced analytics
-
-### Timeline
-
-- Nov 1: Design review
-- Nov 15: Beta release
-- Dec 1: General availability
-
-**Next meeting:** Progress check-in on Nov 8th
-
-**Action Items:**
-
-- ✅ Complete mobile app mockups
-  - Owner: sarah@company.com
-  - Status: in-progress
-  - Due: 2025-11-01
-
-- ⬜ Write API v2 migration guide
-  - Owner: james@company.com
-  - Status: todo
-  - Due: 2025-11-10
-
-**Sentiment:** 🟢 positive
-
-**Confidence:** 92%
-
----
-
-**The magic:** The markdown field is automatically rendered with proper formatting. No custom parsing, no manual HTML generation. Just define `md()` in your schema and it works.
-
-**Or create an editable form:**
+### 5. Let humans fix what the model missed
 
 ```tsx
 import { SchemaEditor } from 'llm-schema/react';
 
-function MeetingNotesEditor({ 
-  value, 
-  onChange 
-}: { 
-  value: MeetingNotes; 
-  onChange: (data: MeetingNotes) => void 
+function CallSummaryEditor({
+  value,
+  onChange
+}: {
+  value: CallSummaryData;
+  onChange: (next: CallSummaryData) => void;
 }) {
-  const validation = MeetingNotesSchema.safeParse(value);
-  
+  const validation = CallSummary.safeParse(value);
+
   return (
     <SchemaEditor
-      schema={MeetingNotesSchema}
+      schema={CallSummary}
       data={value}
       onChange={onChange}
       validationIssues={validation.success ? [] : validation.issues}
@@ -399,44 +305,25 @@ function MeetingNotesEditor({
 }
 ```
 
-### 5. Transform and Analyze
-
-```typescript
-// Diff two versions for audit trails
-const diff = MeetingNotesSchema.diff(before, after);
-
-// Merge updates (e.g., human-in-the-loop editing)
-const merged = MeetingNotesSchema.merge(original, updates);
-
-// Search across all text and markdown fields
-const results = MeetingNotesSchema.search(data, 'budget proposal');
-
-// Extract all entities of a specific type
-const people = MeetingNotesSchema.getEntities(data, 'person');
-
-// Get all markdown content for processing
-const markdown = MeetingNotesSchema.getMarkdownFields(data);
-```
-
----
-
 ## Examples
+
+👉 Try the end-to-end sample app in `examples/meeting-notes` to see this in action (LLM call + validation + React UI).
 
 ### Customer Feedback Analysis
 
 ```typescript
 const FeedbackSchema = defineSchema({
-  customerName: entity('person'),
-  feedbackText: md({ description: 'Original feedback with quotes' }),
-  sentiment: enumType(['positive', 'neutral', 'negative'] as const),
+  customerName: entity('person', "Customer name or handle"),
+  feedbackText: md("Original feedback with quotes"),
+  sentiment: enumType(['positive', 'neutral', 'negative'] as const, "Overall sentiment"),
   categories: array({
     schema: {
       category: enumType(['feature-request', 'bug', 'praise', 'complaint'] as const),
       priority: enumType(['low', 'medium', 'high'] as const)
     }
   }),
-  actionRequired: boolean({ description: 'Does this need follow-up?' }),
-  suggestedResponse: md({ optional: true })
+  actionRequired: text({ optional: true, description: 'Call out follow-up if needed' }),
+  suggestedResponse: md("Optional suggested reply in markdown", { optional: true })
 });
 ```
 
@@ -444,24 +331,24 @@ const FeedbackSchema = defineSchema({
 
 ```typescript
 const ResearchPaperSchema = defineSchema({
-  title: text(),
-  authors: array({ schema: { name: entity('person') } }),
-  abstract: md({ maxLength: 500 }),
+  title: text("Paper title"),
+  authors: array({ schema: { name: entity('person', "Author name") } }),
+  abstract: md("Concise markdown abstract", { maxLength: 500 }),
   keyFindings: array({
     schema: {
-      finding: text(),
-      supportingEvidence: md(),
-      confidence: enumType(['low', 'medium', 'high'] as const)
+      finding: text("Short statement of the finding"),
+      supportingEvidence: md("Evidence in markdown"),
+      confidence: enumType(['low', 'medium', 'high'] as const, "Confidence level")
     }
   }),
   citations: array({
     schema: {
-      title: text(),
-      authors: text(),
-      year: number({ min: 1900, max: 2030 })
+      title: text("Citation title"),
+      authors: text("Citation authors"),
+      year: text("Publication year")
     }
   }),
-  methodology: md()
+  methodology: md("Methodology summary in markdown")
 });
 ```
 
@@ -469,82 +356,69 @@ const ResearchPaperSchema = defineSchema({
 
 ```typescript
 const SalesCallSchema = defineSchema({
-  callDate: date(),
+  callDate: date("ISO date of the call"),
   participants: array({
     schema: {
-      name: entity('person'),
-      role: enumType(['prospect', 'customer', 'team-member'] as const)
+      name: entity('person', "Participant name"),
+      role: enumType(['prospect', 'customer', 'team-member'] as const, "Relationship to us")
     }
   }),
-  summary: md({ description: 'Call highlights and discussion points' }),
+  summary: md("Highlights and discussion points in markdown"),
   painPoints: array({
     schema: {
-      issue: text(),
+      issue: text("Pain point"),
       severity: enumType(['minor', 'moderate', 'critical'] as const),
-      discussed: boolean()
+      discussed: text("How it was handled")
     }
   }),
   nextSteps: array({
     schema: {
-      action: text(),
-      owner: entity('person'),
-      deadline: date({ optional: true })
+      action: text("Follow-up action"),
+      owner: entity('person', "Owner"),
+      deadline: date("Optional due date", { optional: true })
     }
   }),
-  dealProbability: number({ min: 0, max: 100, description: 'Win probability %' })
+  dealProbability: text("Optional probability note", { optional: true })
 });
 ```
 
----
-
 ## API Reference
 
-### Schema Definition
+### Schema definition
 
 ```typescript
 defineSchema<T>(fields: T, options?: SchemaOptions): Schema<T>
 ```
 
-**Field Types:**
-- `text(options?)` - Plain text strings
-- `md(options?)` - Markdown-formatted content
-- `number(options?)` - Numeric values with optional min/max
-- `boolean(options?)` - True/false values
-- `date(options?)` - ISO date strings
-- `enumType(values, options?)` - Constrained choice from list
-- `entity(type, options?)` - Named entities (person, company, etc.)
-- `array(options)` - Lists of items
-- `object(fields)` - Nested structures
+**Field types**
+- `text(options?)`
+- `md(options?)`
+- `number(options?)`
+- `boolean(options?)`
+- `date(options?)`
+- `enumType(values, options?)`
+- `entity(type, options?)`
+- `array(options)`
+- `object(fields)`
 
-**Common Options:**
-- `description` - Instructions for the LLM
-- `optional` - Whether field can be omitted
-- `default` - Default value if not provided
-- `examples` - Example values for LLM guidance
-
-### Schema Methods
+### Schema methods
 
 ```typescript
-schema.toPrompt(options?)          // Generate LLM instructions
-schema.toOpenAITool(options?)      // OpenAI function calling format
-schema.toAnthropicTool(options?)   // Anthropic tool format
-schema.toJsonSchema()              // Standard JSON Schema
+schema.toPrompt(options?)        // Generate LLM instructions
+schema.toOpenAITool(options?)    // OpenAI function/tool definition
+schema.toAnthropicTool(options?) // Anthropic tool definition
+schema.toJsonSchema()            // Standard JSON Schema
 
-schema.parse(input)                // Parse and validate (throws on error)
-schema.safeParse(input)            // Parse with error details
-
-schema.diff(v1, v2)                // Compare two versions
-schema.merge(base, updates)        // Merge changes
-schema.search(data, query)         // Full-text search
-schema.getEntities(data, type?)    // Extract entities
-schema.getMarkdownFields(data)     // Get all markdown content
+schema.parse(input)              // Parse and throw on validation failure
+schema.safeParse(input)          // Return { success, data?, issues? }
+schema.parseWithRepair(input)    // Attempt repair, then validate
 ```
 
-### React Components
+### React components
 
 ```tsx
-import { 
-  SchemaRenderer, 
+import {
+  SchemaRenderer,
   SchemaEditor,
   SchemaField,
   useSchemaData,
@@ -552,141 +426,63 @@ import {
 } from 'llm-schema/react';
 ```
 
-### Generate Edit Forms\n\n```tsx\nimport { generateEditForm } from 'llm-schema/react';\n\nconst EditForm = generateEditForm(AccountApproachSchema, {\n  value: recommendation,\n  onChange: setRecommendation,\n  fields: ['emailBody', 'talkingPoints']\n});\n```\n\nThis helper renders the right editor for each schema field (markdown split-pane, dynamic arrays, numbers, etc.).\n\n---\n
----
-
-## How It Compares
-
-### vs. OpenAI Structured Outputs
-
-**OpenAI Structured Outputs** ensures responses match a JSON Schema (100% reliability for GPT-4o).
-
-**llm-schema** builds on top:
-- ✅ Uses Structured Outputs when available
-- ✅ Adds markdown support for rich content
-- ✅ Works with any LLM provider
-- ✅ Includes React UI components
-- ✅ Provides transformation utilities
-- ✅ Generates better prompts with examples
-
-### vs. Zod
-
-**Zod** is a fantastic TypeScript validation library focused on runtime safety.
-
-**llm-schema** is a separate implementation inspired by Zod’s developer experience, but tuned for LLM content flows:
-- ✅ Purpose-built for LLM prompts, tool schemas, and validation
-- ✅ Includes Markdown and entity-aware field types
-- ✅ Ships React rendering/editing components out of the box
-- ✅ Bundles diff/search/entity utilities alongside your schema
-
-### vs. LangChain
-
-**LangChain** is for building LLM applications (chains, agents, memory).
-
-**llm-schema** focuses on data structure:
-- ✅ Works alongside LangChain
-- ✅ Solves the "structure LLM output" problem
-- ✅ ORM-like abstraction for content
-- ✅ Type-safe throughout
-
----
-
 ## Documentation
 
-### Core Concepts
-
-📖 [Design Document](docs/llm-schema-design.md) - Complete architecture and rationale
-
-🎯 **Single Source of Truth** - Define your schema once, use it everywhere
-
-🔄 **Full Lifecycle Coverage** - From prompt generation to UI rendering
-
-🎨 **Markdown Native** - First-class support for rich content
-
-### Advanced Topics
-
-- **Multi-Provider Support** - Works with OpenAI, Anthropic, Google, and more
-- **Error Recovery** - Automatic fixing of common LLM output errors
-- **Custom Components** - Override default React renderers
-- **Schema Composition** - Reuse schemas across your application
-
----
+- 📖 [Design Document](docs/llm-schema-design.md)
+- 🎥 Live demos and walkthroughs (coming soon)
+- 🧠 Patterns for prompt + schema design (coming soon)
 
 ## Development
-
-### Setup
 
 ```bash
 git clone https://github.com/shenli/llm-schema.git
 cd llm-schema
 npm install
+
+npm run build
+npm test
+npm run lint
 ```
 
-### Commands
-
-```bash
-npm run build       # Compile TypeScript
-npm test            # Run test suite
-npm run test:watch  # Watch mode
-npm run lint        # Check code style
-```
-
-### Project Structure
+Project layout:
 
 ```
 llm-schema/
-├── src/
-│   ├── schema/       # Core schema system
-│   ├── react/        # React components
-│   └── index.ts      # Public API
-├── tests/            # Test suites
-├── examples/         # Example applications
-└── docs/             # Documentation
+├── src/          # Core schema + React bindings
+├── tests/        # Vitest suites
+├── docs/         # Design documentation
+└── examples/     # Usage scenarios
 ```
-
----
-
-## Roadmap
-
-- [ ] **Parsing Recovery** - LLM feedback loops for auto-correction
-- [ ] **Additional Providers** - Native support for more LLM APIs
-- [ ] **Component Themes** - Design tokens and theme system
-- [ ] **Schema Migrations** - Version and migrate schemas safely
-- [ ] **Streaming Support** - Handle streaming LLM responses
-- [ ] **Field Validation** - Custom validation functions per field
-
----
 
 ## Contributing
 
-We welcome contributions! Here's how to get started:
+We welcome pull requests! Please open an issue if you're unsure whether a feature fits the roadmap. Run `npm test` before submitting.
 
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Make your changes** and add tests
-4. **Run the test suite**: `npm test`
-5. **Submit a pull request**
+## Roadmap / Coming Soon
 
-Please read our [Contributing Guide](CONTRIBUTING.md) for details.
-
----
-
-## License
-
-MIT © Li Shen
-
----
+- Diff/merge helpers for human-in-the-loop review
+- Advanced entity resolution + linking
+- Schema versioning + migrations
+- Streaming-friendly rendering
+- Search across markdown fields
+- Design tokens + theming for UI components
 
 ## Support
 
-- 📖 [Documentation](docs/llm-schema-design.md)
-- 💬 [Discussions](https://github.com/shenli/llm-schema/discussions)
-- 🐛 [Issue Tracker](https://github.com/shenli/llm-schema/issues)
+- Discussions: https://github.com/shenli/llm-schema/discussions
+- Issues: https://github.com/shenli/llm-schema/issues
 
----
+## Versioning & Stability
 
-**Built with ❤️ for developers shipping AI features**
+llm-schema is currently pre-1.0 (`0.x.y`).
 
-*Define your schema once. Point your LLM at it. Ship polished experiences.*
+During this phase:
+- New MINOR versions (`0.4.0 → 0.5.0`) may include breaking changes.
+- PATCH versions (`0.4.1 → 0.4.2`) are for fixes and safe improvements.
 
-[Get Started](#quick-start) • [View Examples](#examples) • [Read Docs](docs/llm-schema-design.md)
+Once core APIs are stable (`defineSchema`, `toPrompt`, parsing, `<SchemaRenderer />`), we'll release `1.0.0` and follow strict SemVer:
+- PATCH = bug fix
+- MINOR = new backwards-compatible feature
+- MAJOR = breaking change
+
+We use Changesets to manage versions, changelogs, and publishing to npm.

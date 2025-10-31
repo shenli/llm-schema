@@ -1,4 +1,5 @@
 import React from 'react';
+import type { CSSProperties } from 'react';
 import type { Schema } from '../schema/builder';
 import type {
   AnyFieldDefinition,
@@ -17,6 +18,7 @@ import {
   isObjectField,
   isTextField
 } from '../schema/typeGuards';
+import { MarkdownField } from './MarkdownField';
 
 type FieldComponentProps = {
   value: unknown;
@@ -42,15 +44,235 @@ export interface RendererConfig {
   showOptionalFields?: boolean;
   hiddenFields?: string[];
   labelFormatter?: (params: { path: string; field: AnyFieldDefinition }) => string;
+  stylePreset?: 'card' | 'plain';
+  styles?: Partial<RendererStyles>;
+}
+
+export interface RendererStyles {
+  container?: CSSProperties;
+  group?: CSSProperties;
+  nestedGroup?: CSSProperties;
+  field?: CSSProperties;
+  nestedField?: CSSProperties;
+  rootLabel?: CSSProperties;
+  nestedLabel?: CSSProperties;
+  label?: CSSProperties;
+  value?: CSSProperties;
+  list?: CSSProperties;
+  listItem?: CSSProperties;
+  listItemHeading?: CSSProperties;
+  listItemBadge?: CSSProperties;
+  missing?: CSSProperties;
+}
+
+const stylePresets: Record<'card' | 'plain', RendererStyles> = {
+  card: {
+    container: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '20px',
+      background: '#ffffff',
+      borderRadius: '20px',
+      padding: '24px',
+      border: '1px solid rgba(226, 232, 240, 0.9)',
+      boxShadow: '0 24px 60px rgba(15, 23, 42, 0.12)'
+    },
+    group: {
+      margin: 0,
+      padding: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '18px'
+    },
+    nestedGroup: {
+      margin: 0,
+      padding: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px'
+    },
+    field: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      background: 'rgba(248, 250, 252, 0.9)',
+      borderRadius: '18px',
+      border: '1px solid rgba(226, 232, 240, 0.9)',
+      padding: '16px 18px'
+    },
+    nestedField: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      background: '#ffffff',
+      borderRadius: '14px',
+      border: '1px solid rgba(226, 232, 240, 0.8)',
+      padding: '14px'
+    },
+    rootLabel: {
+      fontWeight: 700,
+      color: '#0f172a',
+      fontSize: '1.05rem',
+      textTransform: 'none'
+    },
+    nestedLabel: {
+      fontWeight: 600,
+      color: '#1e293b',
+      fontSize: '0.95rem'
+    },
+    label: {
+      fontWeight: 600,
+      color: '#0f172a',
+      fontSize: '0.95rem'
+    },
+    value: {
+      color: '#1f2937',
+      fontSize: '0.95rem',
+      lineHeight: 1.6,
+      margin: 0
+    },
+    list: {
+      margin: 0,
+      padding: 0,
+      listStyle: 'none',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '14px'
+    },
+    listItem: {
+      background: '#ffffff',
+      borderRadius: '14px',
+      border: '1px solid rgba(226, 232, 240, 0.9)',
+      padding: '16px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px'
+    },
+    listItemHeading: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      fontSize: '0.85rem',
+      fontWeight: 600,
+      color: '#64748b'
+    },
+    listItemBadge: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 24,
+      height: 24,
+      borderRadius: 999,
+      background: '#eef2ff',
+      color: '#4338ca',
+      fontWeight: 700,
+      fontSize: '0.75rem'
+    },
+    missing: {
+      color: '#94a3b8',
+      fontStyle: 'italic'
+    }
+  },
+  plain: {
+    container: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '16px'
+    },
+    group: {
+      margin: 0,
+      padding: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px'
+    },
+    nestedGroup: {
+      margin: 0,
+      padding: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px'
+    },
+    field: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      padding: '4px 0'
+    },
+    nestedField: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+      padding: '2px 0'
+    },
+    rootLabel: {
+      fontWeight: 700,
+      color: '#111827',
+      fontSize: '1rem'
+    },
+    nestedLabel: {
+      fontWeight: 600,
+      color: '#111827',
+      fontSize: '0.95rem'
+    },
+    label: {
+      fontWeight: 600,
+      color: '#111827',
+      fontSize: '0.95rem'
+    },
+    value: {
+      color: '#1f2937',
+      fontSize: '0.95rem',
+      lineHeight: 1.6,
+      margin: 0
+    },
+    list: {
+      margin: 0,
+      padding: 0,
+      listStyle: 'none',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px'
+    },
+    listItem: {
+      padding: '0 0 8px',
+      borderBottom: '1px solid rgba(209, 213, 219, 0.5)'
+    },
+    listItemHeading: {
+      fontWeight: 600,
+      color: '#6b7280',
+      fontSize: '0.85rem',
+      marginBottom: '6px'
+    },
+    missing: {
+      color: '#6b7280',
+      fontStyle: 'italic'
+    }
+  }
+};
+
+function mergeRendererStyles(
+  preset: RendererStyles,
+  overrides?: Partial<RendererStyles>
+): RendererStyles {
+  if (!overrides) return preset;
+  const merged: RendererStyles = { ...preset };
+  (Object.keys(overrides) as (keyof RendererStyles)[]).forEach((key) => {
+    const override = overrides[key];
+    if (override) {
+      merged[key] = { ...(preset[key] ?? {}), ...override };
+    }
+  });
+  return merged;
 }
 
 const defaultComponents: RendererComponents = {
   text: ({ value }) => <span>{String(value ?? '')}</span>,
-  markdown: ({ value }) => (
-    <div className="llm-schema-markdown">
-      <pre>{String(value ?? '')}</pre>
-    </div>
-  ),
+  markdown: ({ value }) => {
+    const content =
+      typeof value === 'string' ? value : value == null ? '' : String(value);
+    return <MarkdownField content={content} className="llm-schema-renderer__markdown" />;
+  },
   number: ({ value }) => <span>{String(value ?? '')}</span>,
   boolean: ({ value }) => <span>{value ? 'Yes' : 'No'}</span>,
   date: ({ value }) => {
@@ -81,16 +303,33 @@ function renderFieldValue(
   value: unknown,
   path: string,
   components: RendererComponents,
-  config?: RendererConfig
+  config: RendererConfig | undefined,
+  styles: RendererStyles,
+  depth: number
 ): React.ReactNode {
   const label =
     config?.labelFormatter?.({ path, field }) ??
     formatLabel(path.split('.').slice(-1)[0] ?? path);
+  const fieldStyle =
+    depth === 0
+      ? styles.field
+      : styles.nestedField ?? styles.field;
+  const labelStyle =
+    depth === 0
+      ? styles.rootLabel ?? styles.label
+      : styles.nestedLabel ?? styles.label ?? undefined;
 
   const renderPrimitive = (kind: keyof RendererComponents) => (
-    <div className="llm-schema-field" data-kind={kind} data-path={path}>
-      <dt>{label}</dt>
-      <dd>{components[kind]?.({ value, field, path, label })}</dd>
+    <div
+      className="llm-schema-field"
+      data-kind={kind}
+      data-path={path}
+      style={fieldStyle}
+    >
+      <dt style={labelStyle}>{label}</dt>
+      <dd style={styles.value}>
+        {components[kind]?.({ value, field, path, label })}
+      </dd>
     </div>
   );
 
@@ -105,21 +344,38 @@ function renderFieldValue(
   if (isArrayField(field)) {
     const items = Array.isArray(value) ? value : [];
     return (
-      <div className="llm-schema-field" data-kind="array" data-path={path}>
-        <dt>{label}</dt>
-        <dd>
+      <div
+        className="llm-schema-field"
+        data-kind="array"
+        data-path={path}
+        style={fieldStyle}
+      >
+        <dt style={styles.label}>{label}</dt>
+        <dd style={styles.value}>
           {items.length === 0 ? (
-            <em>No entries</em>
+            <em style={styles.missing}>No entries</em>
           ) : (
-            <ol>
+            <ol style={styles.list}>
               {items.map((item, index) => (
-                <li key={index}>
+                <li key={index} style={styles.listItem}>
+                  {styles.listItemHeading && (
+                    <div style={styles.listItemHeading}>
+                      {styles.listItemBadge ? (
+                        <span style={styles.listItemBadge}>{index + 1}</span>
+                      ) : (
+                        <strong>#{index + 1}</strong>
+                      )}
+                      <span>Item {index + 1}</span>
+                    </div>
+                  )}
                   {renderNestedFields(
                     field.itemDefinition,
                     (item as Record<string, unknown>) ?? {},
                     `${path}.${index}`,
                     components,
-                    config
+                    config,
+                    styles,
+                    depth + 1
                   )}
                 </li>
               ))}
@@ -132,15 +388,22 @@ function renderFieldValue(
 
   if (isObjectField(field)) {
     return (
-      <div className="llm-schema-field" data-kind="object" data-path={path}>
-        <dt>{label}</dt>
-        <dd>
+      <div
+        className="llm-schema-field"
+        data-kind="object"
+        data-path={path}
+        style={fieldStyle}
+      >
+        <dt style={labelStyle}>{label}</dt>
+        <dd style={styles.value}>
           {renderNestedFields(
             field.shape,
             (value && typeof value === 'object' ? (value as Record<string, unknown>) : {}) ?? {},
             path,
             components,
-            config
+            config,
+            styles,
+            depth + 1
           )}
         </dd>
       </div>
@@ -155,7 +418,9 @@ function renderNestedFields(
   data: unknown,
   parentPath: string,
   components: RendererComponents,
-  config?: RendererConfig
+  config: RendererConfig | undefined,
+  styles: RendererStyles,
+  depth = 0
 ) {
   const entries = Object.entries(definition);
   if (entries.length === 0) {
@@ -166,7 +431,10 @@ function renderNestedFields(
     data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
 
   return (
-    <dl>
+    <dl
+      className="llm-schema-group"
+      style={depth === 0 ? styles.group : styles.nestedGroup ?? styles.group}
+    >
       {entries.map(([key, childField]) => {
         const path = parentPath ? `${parentPath}.${key}` : key;
         const value = record[key];
@@ -181,10 +449,15 @@ function renderNestedFields(
 
         if (value === undefined && config?.showOptionalFields) {
           return (
-            <div key={path} className="llm-schema-field llm-schema-field--missing" data-path={path}>
-              <dt>{formatLabel(key)}</dt>
-              <dd>
-                <em>Not provided</em>
+            <div
+              key={path}
+              className="llm-schema-field llm-schema-field--missing"
+              data-path={path}
+              style={depth === 0 ? styles.field : styles.nestedField ?? styles.field}
+            >
+              <dt style={styles.label}>{formatLabel(key)}</dt>
+              <dd style={{ ...(styles.value ?? {}), ...(styles.missing ?? {}) }}>
+                Not provided
               </dd>
             </div>
           );
@@ -192,7 +465,7 @@ function renderNestedFields(
 
         return (
           <React.Fragment key={path}>
-            {renderFieldValue(childField, value, path, components, config)}
+            {renderFieldValue(childField, value, path, components, config, styles, depth)}
           </React.Fragment>
         );
       })}
@@ -205,22 +478,42 @@ export interface SchemaRendererProps<Definition extends SchemaDefinition> {
   data: SchemaOutput<Definition>;
   components?: Partial<RendererComponents>;
   config?: RendererConfig;
+  markdownRenderer?: (content: string) => React.ReactNode;
 }
 
 export function SchemaRenderer<Definition extends SchemaDefinition>({
   schema,
   data,
   components,
-  config
+  config,
+  markdownRenderer
 }: SchemaRendererProps<Definition>) {
+  const styles = React.useMemo(
+    () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'card'], config?.styles),
+    [config?.stylePreset, config?.styles]
+  );
+
   const mergedComponents: RendererComponents = {
     ...defaultComponents,
     ...(components ?? {})
   };
 
+  if (markdownRenderer) {
+    mergedComponents.markdown = ({ value }) =>
+      markdownRenderer(typeof value === 'string' ? value : value == null ? '' : String(value));
+  }
+
   return (
-    <div className={`llm-schema-renderer llm-schema-renderer--${config?.layout ?? 'stack'}`}>
-      {renderNestedFields(schema.getDefinition(), data, '', mergedComponents, config)}
+    <div
+      className={[
+        'llm-schema-renderer',
+        config?.layout ? `llm-schema-renderer--${config.layout}` : null
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={styles.container}
+    >
+      {renderNestedFields(schema.getDefinition(), data, '', mergedComponents, config, styles)}
     </div>
   );
 }
@@ -240,14 +533,19 @@ export function SchemaField({
   components,
   config
 }: SchemaFieldProps) {
+  const styles = React.useMemo(
+    () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'card'], config?.styles),
+    [config?.stylePreset, config?.styles]
+  );
+
   const mergedComponents: RendererComponents = {
     ...defaultComponents,
     ...(components ?? {})
   };
 
   return (
-    <dl className="llm-schema-fieldset">
-      {renderFieldValue(field, value, path, mergedComponents, config)}
+    <dl className="llm-schema-fieldset" style={styles.group}>
+      {renderFieldValue(field, value, path, mergedComponents, config, styles, 0)}
     </dl>
   );
 }
@@ -293,6 +591,10 @@ export function SchemaEditor<Definition extends SchemaDefinition>({
   validationIssues
 }: SchemaEditorProps<Definition>) {
   const definition = schema.getDefinition();
+  const styles = React.useMemo(
+    () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'plain'], config?.styles),
+    [config?.stylePreset, config?.styles]
+  );
 
   const handleChange = React.useCallback(
     (path: string, value: unknown) => {
@@ -542,7 +844,8 @@ export function SchemaEditor<Definition extends SchemaDefinition>({
             </div>
           )
         },
-        config
+        config,
+        styles
       )}
     </form>
   );
