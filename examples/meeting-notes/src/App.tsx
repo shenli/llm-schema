@@ -1,57 +1,28 @@
-import { useMemo, useState, type CSSProperties } from 'react';
-import type { ParseIssue } from 'llm-schema';
-import { SchemaRenderer, MarkdownField } from 'llm-schema/react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { experimental_useObject as useObject } from '@ai-sdk/react';
+import { jsonSchema } from 'ai';
+import {
+  SchemaRenderer,
+  SchemaEditor,
+  SchemaDiff,
+  EntityProvider,
+  useEntityResolver,
+  useStreamingSchema,
+  type Entity,
+  type ParseIssue,
+  type ParseWithRepairResult
+} from 'llm-schema';
 import { MeetingNotesSchema, type MeetingNotes } from '../schema';
+import { PolishedView } from './PolishedView';
+import { SchemaInspector } from './SchemaInspector';
 
-interface AnalyzeResponse {
-  success: boolean;
-  data?: MeetingNotes;
-  issues?: ParseIssue[];
-  prompt?: string;
-  raw?: string;
-}
+// AI SDK 6 wraps — feed our JSON Schema through `jsonSchema()` for typed streaming.
+const aiSchema = jsonSchema<MeetingNotes>(
+  MeetingNotesSchema.toJsonSchema() as unknown as Parameters<typeof jsonSchema>[0]
+);
 
-const sentimentTokens: Record<
-  MeetingNotes['sentiment'],
-  { label: string; text: string; background: string; border: string }
-> = {
-  positive: {
-    label: 'Positive',
-    text: '#166534',
-    background: '#dcfce7',
-    border: '#bbf7d0'
-  },
-  neutral: {
-    label: 'Neutral',
-    text: '#1f2937',
-    background: '#f3f4f6',
-    border: '#e5e7eb'
-  },
-  negative: {
-    label: 'Negative',
-    text: '#991b1b',
-    background: '#fee2e2',
-    border: '#fecaca'
-  }
-};
-
-const priorityTokens: Record<
-  NonNullable<MeetingNotes['actionItems'][number]['priority']>,
-  { text: string; background: string }
-> = {
-  high: {
-    text: '#b91c1c',
-    background: 'rgba(248, 113, 113, 0.18)'
-  },
-  medium: {
-    text: '#b45309',
-    background: 'rgba(251, 191, 36, 0.18)'
-  },
-  low: {
-    text: '#2563eb',
-    background: 'rgba(96, 165, 250, 0.18)'
-  }
-};
+type Pipeline = 'structured' | 'legacy';
+type ResultTab = 'polished' | 'generated' | 'edit';
 
 const exampleTranscript = `
 Alice (PM): Welcome everyone. Today we need to align on the Q3 launch plan for the analytics dashboard.
@@ -71,236 +42,538 @@ Priya: We'll handle load tests and prep a failover plan. If we finish early, we 
 Alice: Let's document risks in Confluence and make sure the support team gets a quickstart guide.
 `.trim();
 
-function formatDueDate(value?: string) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
-}
+const seedPeople: Entity[] = [
+  { type: 'person', id: 'alice@acme.com', label: 'Alice Archer (PM)' },
+  { type: 'person', id: 'sam@acme.com', label: 'Sam Song (Design)' },
+  { type: 'person', id: 'priya@acme.com', label: 'Priya Patel (Eng)' },
+  { type: 'person', id: 'leo@acme.com', label: 'Leo Lin (Marketing)' }
+];
 
 function App() {
+  const [people, setPeople] = useState<Entity[]>(seedPeople);
+
+  return (
+    <EntityProvider entities={people} onChange={setPeople}>
+      <AppInner />
+    </EntityProvider>
+  );
+}
+
+function AppInner() {
   const [transcript, setTranscript] = useState(exampleTranscript);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<MeetingNotes | null>(null);
-  const [issues, setIssues] = useState<ParseIssue[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState<string | undefined>();
+  const [pipeline, setPipeline] = useState<Pipeline>('structured');
+  const [tab, setTab] = useState<ResultTab>('polished');
+  const [edited, setEdited] = useState<MeetingNotes | null>(null);
 
-  const actionItemsCount = result?.actionItems.length ?? 0;
+  // Structured streaming pipeline (AI SDK useObject).
+  // Cast needed because `ai` and `@ai-sdk/react` each bundle their own copy of
+  // `@ai-sdk/provider-utils`, so the `validatorSymbol` brand differs across the
+  // two packages at type-check time. At runtime the shape matches exactly.
+  const structuredHook = useObject({
+    api: '/api/analyze',
+    schema: aiSchema as unknown as Parameters<typeof useObject>[0]['schema']
+  });
+  const {
+    object: streamObject,
+    submit: streamSubmit,
+    isLoading: streamLoading,
+    error: streamError,
+    stop
+  } = structuredHook;
+  const streaming = useStreamingSchema({
+    schema: MeetingNotesSchema,
+    object: streamObject,
+    isLoading: streamLoading
+  });
 
-  const submitDisabled = useMemo(() => loading || transcript.trim().length === 0, [loading, transcript]);
+  // Legacy + repair pipeline
+  const [legacyLoading, setLegacyLoading] = useState(false);
+  const [legacyError, setLegacyError] = useState<string | null>(null);
+  const [legacyRaw, setLegacyRaw] = useState<string | null>(null);
+  const [legacyResult, setLegacyResult] =
+    useState<ParseWithRepairResult<MeetingNotes> | null>(null);
 
-  async function handleAnalyze(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
-    setIssues([]);
-    setResult(null);
+  const active =
+    pipeline === 'structured'
+      ? {
+          data: streaming.data as MeetingNotes | undefined,
+          partial: streaming.partial,
+          isValid: streaming.isValid,
+          issues: streaming.issues,
+          loading: streamLoading,
+          error: streamError?.message ?? null
+        }
+      : {
+          data: legacyResult?.data,
+          partial: false,
+          isValid: !!legacyResult?.success,
+          issues: legacyResult?.issues ?? [],
+          loading: legacyLoading,
+          error: legacyError
+        };
 
+  const submitDisabled = active.loading || transcript.trim().length === 0;
+
+  const handleAnalyze = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setEdited(null);
+    setTab('polished');
+
+    if (pipeline === 'structured') {
+      streamSubmit({ transcript });
+      return;
+    }
+
+    setLegacyLoading(true);
+    setLegacyError(null);
+    setLegacyRaw(null);
+    setLegacyResult(null);
     try {
-      const response = await fetch('/api/analyze', {
+      const res = await fetch('/api/analyze-legacy', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript })
       });
-
-      const payload = (await response.json()) as AnalyzeResponse;
-
-      setPrompt(payload.prompt);
-
-      if (!payload.success) {
-        setIssues(payload.issues ?? []);
-        setError('The model response did not match the schema. See issues below.');
-        return;
-      }
-
-      if (!payload.data) {
-        setError('The response succeeded but did not include data.');
-        return;
-      }
-
-      setResult(payload.data);
+      const payload = (await res.json()) as { raw?: string; error?: string };
+      if (payload.error) throw new Error(payload.error);
+      const raw = payload.raw ?? '';
+      setLegacyRaw(raw);
+      const repaired = MeetingNotesSchema.parseWithRepair(
+        raw
+      ) as ParseWithRepairResult<MeetingNotes>;
+      setLegacyResult(repaired);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setLegacyError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
-      setLoading(false);
+      setLegacyLoading(false);
     }
-  }
+  };
 
   return (
     <div style={styles.page}>
       <div style={styles.backdrop} />
       <header style={styles.header}>
-        <span style={styles.titleEyebrow}>Meeting Notes</span>
-        <h1 style={styles.title}>llm-schema Example</h1>
+        <span style={styles.titleEyebrow}>Meeting Notes · llm-schema 0.3</span>
+        <h1 style={styles.title}>One schema. Every job.</h1>
         <p style={styles.subtitle}>
-          Define once. Use everywhere. Paste a transcript, generate structured notes, render them instantly.
+          Streaming structured output, zero-code rendering, nested editing, diff view, entity
+          resolution, and JSON repair — all driven by the same schema definition.
         </p>
       </header>
 
       <main style={styles.content}>
+        <PipelinePicker value={pipeline} onChange={setPipeline} />
+
         <section style={styles.inputCard}>
           <form onSubmit={handleAnalyze} style={styles.form}>
             <label htmlFor="transcript" style={styles.label}>
-              Meeting transcript or notes
+              Meeting transcript
             </label>
             <textarea
               id="transcript"
               value={transcript}
-              onChange={(event) => setTranscript(event.target.value)}
-              rows={18}
+              onChange={(e) => setTranscript(e.target.value)}
+              rows={14}
               style={styles.textarea}
               placeholder="Paste raw meeting notes or transcript here..."
             />
-            <button
-              type="submit"
-              style={{
-                ...styles.button,
-                opacity: submitDisabled ? 0.6 : 1,
-                cursor: submitDisabled ? 'not-allowed' : 'pointer'
-              }}
-              disabled={submitDisabled}
-            >
-              {loading ? 'Analyzing…' : 'Generate structured notes'}
-            </button>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                type="submit"
+                style={{
+                  ...styles.button,
+                  opacity: submitDisabled ? 0.6 : 1,
+                  cursor: submitDisabled ? 'not-allowed' : 'pointer'
+                }}
+                disabled={submitDisabled}
+              >
+                {active.loading
+                  ? pipeline === 'structured'
+                    ? 'Streaming…'
+                    : 'Generating…'
+                  : pipeline === 'structured'
+                    ? 'Generate (streaming)'
+                    : 'Generate (legacy → repair)'}
+              </button>
+              {pipeline === 'structured' && streamLoading && (
+                <button type="button" onClick={() => stop()} style={styles.buttonSecondary}>
+                  Stop
+                </button>
+              )}
+            </div>
             <p style={styles.helperText}>
-              OpenAI model: <code>gpt-5-mini</code>. Schema and instructions come from <code>MeetingNotesSchema</code>.
+              {pipeline === 'structured' ? (
+                <>
+                  Uses <code>streamObject({'{ schema: MeetingNotesSchema }'})</code> from Vercel AI
+                  SDK. The schema is enforced at the token level; the renderer is partial-aware.
+                </>
+              ) : (
+                <>
+                  Uses plain <code>generateText</code> with no schema enforcement. The client feeds
+                  the raw response to <code>schema.parseWithRepair()</code> — see the repair panel
+                  below.
+                </>
+              )}
             </p>
           </form>
 
-          {prompt && (
-            <details style={styles.promptDetails}>
-              <summary style={styles.summary}>See the generated prompt instructions</summary>
-              <pre style={styles.promptPre}>{prompt}</pre>
-            </details>
-          )}
-
-          {error && (
+          {active.error && (
             <div style={styles.errorPanel}>
-              <strong>{error}</strong>
-              {issues.length > 0 && (
-                <ul style={styles.issueList}>
-                  {issues.map((issue, index) => (
-                    <li key={`${issue.path.join('.')}-${index}`}>
-                      <code>{issue.path.join('.')}</code>: {issue.message}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <strong>Request failed:</strong> {active.error}
             </div>
           )}
         </section>
 
-        <section style={styles.resultSection}>
-          {!result && !loading && (
-            <div style={styles.placeholderCard}>
-              <h3 style={{ margin: '0 0 8px', fontSize: '1.2rem', color: '#0f172a' }}>
-                Structured results appear here
-              </h3>
-              <p style={{ color: '#5b6470', margin: 0 }}>
-                Submit a transcript to see how one schema powers prompt instructions, parsing, and rich React rendering.
-              </p>
-            </div>
-          )}
+        {pipeline === 'legacy' && legacyRaw && legacyResult && (
+          <RepairPanel raw={legacyRaw} result={legacyResult} />
+        )}
 
-          {result && (
-            <div style={styles.resultCard}>
-              <header style={styles.hero}>
-                <div>
-                  <span style={styles.heroEyebrow}>Meeting summary</span>
-                  <h2 style={styles.heroTitle}>{result.meetingTitle}</h2>
-                </div>
-                <div style={styles.heroMeta}>
-                  <span
-                    style={{
-                      ...styles.sentimentBadge,
-                      color: sentimentTokens[result.sentiment].text,
-                      background: sentimentTokens[result.sentiment].background,
-                      borderColor: sentimentTokens[result.sentiment].border
-                    }}
-                  >
-                    {sentimentTokens[result.sentiment].label}
-                  </span>
-                  <span style={styles.metaPill}>{actionItemsCount} action items</span>
-                </div>
-              </header>
+        {active.data && (
+          <section style={styles.resultCard}>
+            <ResultTabs
+              tab={tab}
+              onChange={setTab}
+              canEdit={!active.partial && active.isValid}
+              hasEdits={!!edited}
+            />
 
-              <div style={styles.summaryStack}>
-                <section style={styles.sectionCard}>
-                  <h3 style={styles.sectionTitle}>Summary</h3>
-                  <div style={styles.markdown}>
-                    <MarkdownField content={result.summary ?? ''} />
-                  </div>
-                </section>
-                <section style={styles.sectionCard}>
-                  <h3 style={styles.sectionTitle}>Highlights</h3>
-                  <div style={styles.markdown}>
-                    <MarkdownField content={result.highlights ?? ''} />
-                  </div>
-                </section>
-                <section style={styles.sectionCard}>
-                  <h3 style={styles.sectionTitle}>Follow ups</h3>
-                  <div style={styles.markdown}>
-                    <MarkdownField content={result.followUps ?? ''} />
-                  </div>
-                </section>
-              </div>
+            {tab === 'polished' && (
+              <PolishedView data={active.data} partial={active.partial} />
+            )}
 
-              <section style={styles.actionSection}>
-                <div style={styles.sectionHeader}>
-                  <h3 style={styles.sectionTitle}>Action items</h3>
-                  <span style={{ color: '#64748b', fontSize: '0.9rem' }}>
-                    Ownership, due dates, and priority are captured automatically.
-                  </span>
-                </div>
-                <div style={styles.actionGrid}>
-                  {result.actionItems.map((item, index) => {
-                    const priority = item.priority ? priorityTokens[item.priority] : null;
-                    return (
-                      <article key={`${item.task}-${index}`} style={styles.actionCard}>
-                        <header style={styles.actionHeader}>
-                          <span style={styles.actionIndex}>#{index + 1}</span>
-                          {priority && (
-                            <span
-                              style={{
-                                ...styles.priorityBadge,
-                                color: priority.text,
-                                background: priority.background
-                              }}
-                            >
-                              {item.priority.toUpperCase()}
-                            </span>
-                          )}
-                        </header>
-                        <h4 style={styles.actionTask}>{item.task}</h4>
-                        <div style={styles.actionMeta}>
-                          <span style={styles.ownerPill}>{item.owner}</span>
-                          {item.dueDate && (
-                            <span style={styles.dueChip}>Due {formatDueDate(item.dueDate) ?? item.dueDate}</span>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </section>
+            {tab === 'generated' && (
+              <GeneratedView data={active.data} partial={active.partial} />
+            )}
 
-              <details style={styles.schemaDetails}>
-                <summary style={styles.summary}>Peek at the schema-driven renderer</summary>
-                <div style={styles.schemaPreview}>
-                  <SchemaRenderer schema={MeetingNotesSchema} data={result} />
-                </div>
-              </details>
-            </div>
-          )}
-        </section>
+            {tab === 'edit' && active.data && (
+              <EditTab
+                original={active.data}
+                edited={edited}
+                setEdited={setEdited}
+                issues={active.issues}
+              />
+            )}
+          </section>
+        )}
+
+        <SchemaInspector />
       </main>
+    </div>
+  );
+}
+
+function PipelinePicker({
+  value,
+  onChange
+}: {
+  value: Pipeline;
+  onChange: (next: Pipeline) => void;
+}) {
+  return (
+    <section style={styles.pipelineCard}>
+      <strong style={styles.pipelineTitle}>Pipeline</strong>
+      <label style={styles.pipelineOption}>
+        <input
+          type="radio"
+          name="pipeline"
+          checked={value === 'structured'}
+          onChange={() => onChange('structured')}
+        />
+        <div>
+          <div style={styles.pipelineOptionTitle}>Structured streaming</div>
+          <div style={styles.pipelineOptionBody}>
+            AI SDK <code>streamObject</code> · token-level schema enforcement · partial render
+          </div>
+        </div>
+      </label>
+      <label style={styles.pipelineOption}>
+        <input
+          type="radio"
+          name="pipeline"
+          checked={value === 'legacy'}
+          onChange={() => onChange('legacy')}
+        />
+        <div>
+          <div style={styles.pipelineOptionTitle}>Legacy + repair</div>
+          <div style={styles.pipelineOptionBody}>
+            Plain text response with code fences · <code>schema.parseWithRepair()</code> strips and
+            validates
+          </div>
+        </div>
+      </label>
+    </section>
+  );
+}
+
+function RepairPanel({
+  raw,
+  result
+}: {
+  raw: string;
+  result: ParseWithRepairResult<MeetingNotes>;
+}) {
+  return (
+    <section style={styles.repairCard}>
+      <div style={styles.repairHeader}>
+        <strong>Repair pipeline</strong>
+        <span
+          style={{
+            ...styles.repairBadge,
+            background: result.success ? '#dcfce7' : '#fee2e2',
+            color: result.success ? '#166534' : '#991b1b'
+          }}
+        >
+          {result.success ? 'Validated after repair' : 'Validation failed'}
+        </span>
+      </div>
+      {result.repairSteps.length === 0 ? (
+        <p style={styles.repairNote}>
+          No repair was necessary — the raw response parsed as valid JSON directly.
+        </p>
+      ) : (
+        <>
+          <p style={styles.repairNote}>Applied repair steps, in order:</p>
+          <ol style={styles.repairSteps}>
+            {result.repairSteps.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      <div style={styles.repairGrid}>
+        <div>
+          <div style={styles.repairLabel}>Raw LLM output</div>
+          <pre style={styles.repairPre}>{raw}</pre>
+        </div>
+        <div>
+          <div style={styles.repairLabel}>After repair</div>
+          <pre style={styles.repairPre}>
+            {result.repairedSource ?? '(no repair needed — identical to raw)'}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ResultTabs({
+  tab,
+  onChange,
+  canEdit,
+  hasEdits
+}: {
+  tab: ResultTab;
+  onChange: (next: ResultTab) => void;
+  canEdit: boolean;
+  hasEdits: boolean;
+}) {
+  const tabs: Array<{ id: ResultTab; label: string; disabled?: boolean; badge?: string }> = [
+    { id: 'polished', label: 'Polished (custom UI)' },
+    { id: 'generated', label: 'Generated (zero custom code)' },
+    {
+      id: 'edit',
+      label: `Edit${hasEdits ? ' •' : ''}`,
+      disabled: !canEdit,
+      badge: canEdit ? undefined : 'waits for stream'
+    }
+  ];
+  return (
+    <div style={styles.resultTabs}>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          disabled={t.disabled}
+          onClick={() => onChange(t.id)}
+          style={{
+            ...styles.resultTab,
+            ...(t.id === tab ? styles.resultTabActive : null),
+            ...(t.disabled ? styles.resultTabDisabled : null)
+          }}
+          title={t.badge}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GeneratedView({
+  data,
+  partial
+}: {
+  data: MeetingNotes | Record<string, unknown>;
+  partial: boolean;
+}) {
+  return (
+    <div>
+      <p style={styles.generatedNote}>
+        Everything below is rendered by <code>&lt;SchemaRenderer /&gt;</code> with zero custom UI
+        code. Theme it with <code>config.classNames</code>, replace any field component with
+        <code>components</code>, or leave the defaults.
+      </p>
+      <SchemaRenderer schema={MeetingNotesSchema} data={data as MeetingNotes} partial={partial} />
+    </div>
+  );
+}
+
+function EditTab({
+  original,
+  edited,
+  setEdited,
+  issues
+}: {
+  original: MeetingNotes;
+  edited: MeetingNotes | null;
+  setEdited: (next: MeetingNotes | null) => void;
+  issues: ParseIssue[];
+}) {
+  useEffect(() => {
+    if (!edited) {
+      setEdited(structuredClone(original));
+    }
+  }, [edited, original, setEdited]);
+
+  const resolver = useEntityResolver();
+  const current = edited ?? original;
+  const validation = useMemo(
+    () => MeetingNotesSchema.safeParse(current),
+    [current]
+  );
+  const editorIssues = validation.success ? [] : validation.issues;
+  const hasEdits = JSON.stringify(current) !== JSON.stringify(original);
+
+  // Detect owner ids that aren't registered in the entity provider.
+  const unregisteredOwners = useMemo(() => {
+    if (!resolver) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of current.actionItems ?? []) {
+      const id = item?.owner;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (!resolver.byId('person', id)) out.push(id);
+    }
+    return out;
+  }, [current, resolver]);
+
+  const reset = () => setEdited(structuredClone(original));
+
+  const simulateInvalid = () => {
+    // Strip a required field to show field-level errors in the editor.
+    const next = structuredClone(current);
+    (next as Record<string, unknown>).sentiment = undefined;
+    setEdited(next);
+  };
+
+  return (
+    <>
+      <div style={styles.editHeader}>
+        <div>
+          <h3 style={styles.sectionTitle}>Human-in-the-loop editor</h3>
+          <p style={{ margin: '4px 0 0', color: '#5b6470', fontSize: '0.9rem' }}>
+            Arrays have add / remove / reorder. Owners use a typeahead from the entity registry.
+            Errors surface per-field.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            style={styles.buttonSecondary}
+            onClick={simulateInvalid}
+            title="Strips the required sentiment field — watch the editor show a validation error"
+          >
+            💥 Simulate invalid output
+          </button>
+          <button
+            type="button"
+            style={styles.buttonSecondary}
+            onClick={reset}
+            disabled={!hasEdits}
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+
+      {unregisteredOwners.length > 0 && (
+        <UnregisteredOwners ids={unregisteredOwners} />
+      )}
+
+      {issues.length > 0 && (
+        <div style={{ ...styles.errorPanel, marginBottom: 0 }}>
+          <strong>Streaming output had issues:</strong>
+          <ul style={styles.issueList}>
+            {issues.map((issue, i) => (
+              <li key={i}>
+                <code>{issue.path.join('.') || '<root>'}</code>: {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div style={styles.editorShell}>
+        <SchemaEditor
+          schema={MeetingNotesSchema}
+          data={current}
+          onChange={(next) => setEdited(next as MeetingNotes)}
+          validationIssues={editorIssues}
+          config={{ stylePreset: 'plain' }}
+        />
+      </div>
+
+      <section style={styles.sectionCard}>
+        <h3 style={styles.sectionTitle}>Changes {hasEdits ? '(unsaved)' : '(none)'}</h3>
+        <SchemaDiff
+          schema={MeetingNotesSchema}
+          prev={original}
+          next={current}
+          layout="side-by-side"
+        />
+      </section>
+    </>
+  );
+}
+
+function UnregisteredOwners({ ids }: { ids: string[] }) {
+  const resolver = useEntityResolver();
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  if (!resolver) return null;
+
+  return (
+    <div style={styles.unregisteredPanel}>
+      <strong>Unknown owners</strong>
+      <p style={{ margin: '4px 0 10px', color: '#7c2d12', fontSize: '0.85rem' }}>
+        The LLM produced owner ids that aren't in the entity registry. Register them so they
+        display with readable labels across every view.
+      </p>
+      {ids.map((id) => (
+        <div key={id} style={styles.unregisteredRow}>
+          <code style={{ flex: 1, color: '#7c2d12' }}>{id}</code>
+          <input
+            type="text"
+            placeholder="Display label"
+            value={drafts[id] ?? ''}
+            onChange={(e) => setDrafts({ ...drafts, [id]: e.target.value })}
+            style={styles.unregisteredInput}
+          />
+          <button
+            type="button"
+            style={styles.button}
+            onClick={() => {
+              const label = drafts[id]?.trim();
+              if (!label) return;
+              resolver.register({ type: 'person', id, label });
+              setDrafts({ ...drafts, [id]: '' });
+            }}
+          >
+            Register
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -316,7 +589,8 @@ const styles: Record<string, CSSProperties> = {
   backdrop: {
     position: 'absolute',
     inset: 0,
-    background: 'radial-gradient(circle at top, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.75) 45%, transparent 70%)',
+    background:
+      'radial-gradient(circle at top, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.75) 45%, transparent 70%)',
     pointerEvents: 'none'
   },
   header: {
@@ -327,7 +601,7 @@ const styles: Record<string, CSSProperties> = {
     textAlign: 'center',
     gap: '6px',
     maxWidth: 720,
-    margin: '0 auto 40px'
+    margin: '0 auto 32px'
   },
   titleEyebrow: {
     textTransform: 'uppercase',
@@ -345,17 +619,52 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     color: '#475569',
     fontSize: '1rem',
-    maxWidth: 520
+    maxWidth: 640
   },
   content: {
     position: 'relative',
     zIndex: 1,
-    maxWidth: 920,
+    maxWidth: 980,
     margin: '0 auto',
     display: 'flex',
     flexDirection: 'column',
-    gap: '32px',
+    gap: '24px',
     padding: '0 32px'
+  },
+  pipelineCard: {
+    background: 'rgba(255, 255, 255, 0.92)',
+    borderRadius: 20,
+    padding: '18px 22px',
+    display: 'grid',
+    gridTemplateColumns: 'auto 1fr 1fr',
+    gap: 16,
+    alignItems: 'center',
+    boxShadow: '0 10px 30px rgba(15, 23, 42, 0.06)',
+    border: '1px solid rgba(148, 163, 184, 0.24)'
+  },
+  pipelineTitle: {
+    color: '#0f172a',
+    fontSize: '0.95rem'
+  },
+  pipelineOption: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: '10px 14px',
+    borderRadius: 12,
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    cursor: 'pointer'
+  },
+  pipelineOptionTitle: {
+    fontWeight: 600,
+    color: '#0f172a',
+    fontSize: '0.9rem'
+  },
+  pipelineOptionBody: {
+    color: '#475569',
+    fontSize: '0.82rem',
+    marginTop: 2
   },
   inputCard: {
     background: 'rgba(255, 255, 255, 0.95)',
@@ -385,7 +694,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '1rem',
     lineHeight: 1.6,
     resize: 'vertical',
-    minHeight: '320px',
+    minHeight: '240px',
     boxShadow: 'inset 0 1px 3px rgba(148, 163, 184, 0.18)'
   },
   button: {
@@ -393,125 +702,135 @@ const styles: Record<string, CSSProperties> = {
     border: 'none',
     background: 'linear-gradient(135deg, #6366f1 0%, #2563eb 100%)',
     color: 'white',
-    padding: '15px 20px',
+    padding: '12px 20px',
     fontWeight: 600,
-    fontSize: '1rem',
+    fontSize: '0.95rem',
     cursor: 'pointer',
     boxShadow: '0 12px 30px rgba(79, 70, 229, 0.35)'
+  },
+  buttonSecondary: {
+    borderRadius: 999,
+    border: '1px solid #cbd5e1',
+    background: '#ffffff',
+    color: '#334155',
+    padding: '10px 18px',
+    fontWeight: 600,
+    fontSize: '0.9rem',
+    cursor: 'pointer'
   },
   helperText: {
     margin: 0,
     fontSize: '0.85rem',
     color: '#5b6470'
   },
-  promptDetails: {
-    background: '#0f172a',
-    borderRadius: 16,
-    color: '#e2e8f0',
-    padding: '16px 18px',
-    boxShadow: '0 20px 40px rgba(15, 23, 42, 0.45)'
-  },
-  summary: {
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  promptPre: {
-    marginTop: 12,
-    maxHeight: 240,
-    overflowY: 'auto',
-    background: 'rgba(10, 12, 29, 0.65)',
-    color: '#e2e8f0',
-    padding: '16px',
-    borderRadius: 12,
-    fontSize: '0.85rem'
-  },
   errorPanel: {
     background: '#fef2f2',
     borderRadius: 16,
     padding: '16px',
     color: '#b91c1c',
-    boxShadow: '0 8px 24px rgba(244, 63, 94, 0.18)'
+    boxShadow: '0 8px 24px rgba(244, 63, 94, 0.18)',
+    marginBottom: 20
   },
   issueList: {
-    marginTop: 12,
+    marginTop: 10,
     paddingLeft: 20,
     color: '#7f1d1d'
   },
-  resultSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px'
-  },
-  placeholderCard: {
-    background: 'rgba(255, 255, 255, 0.92)',
-    borderRadius: 24,
-    padding: '48px 40px',
-    textAlign: 'center',
-    boxShadow: '0 24px 60px rgba(15, 23, 42, 0.08)',
+  repairCard: {
+    background: '#ffffff',
+    borderRadius: 20,
+    padding: '22px',
+    boxShadow: '0 18px 45px rgba(15, 23, 42, 0.08)',
     border: '1px solid rgba(148, 163, 184, 0.24)'
+  },
+  repairHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10
+  },
+  repairBadge: {
+    padding: '4px 10px',
+    borderRadius: 999,
+    fontSize: '0.8rem',
+    fontWeight: 600
+  },
+  repairNote: {
+    margin: '0 0 8px',
+    color: '#334155',
+    fontSize: '0.9rem'
+  },
+  repairSteps: {
+    margin: '0 0 14px',
+    paddingLeft: 20,
+    color: '#334155',
+    fontSize: '0.9rem',
+    lineHeight: 1.6
+  },
+  repairGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 14
+  },
+  repairLabel: {
+    fontWeight: 600,
+    marginBottom: 4,
+    color: '#475569',
+    fontSize: '0.82rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em'
+  },
+  repairPre: {
+    margin: 0,
+    background: '#0f172a',
+    color: '#e2e8f0',
+    padding: '14px',
+    borderRadius: 12,
+    fontSize: '0.8rem',
+    maxHeight: 280,
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap'
   },
   resultCard: {
     background: 'rgba(255, 255, 255, 0.96)',
     borderRadius: 28,
     boxShadow: '0 40px 90px rgba(15, 23, 42, 0.12)',
-    padding: '36px',
+    padding: '28px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '28px',
+    gap: '20px',
     border: '1px solid rgba(148, 163, 184, 0.18)'
   },
-  hero: {
+  resultTabs: {
     display: 'flex',
+    gap: 8,
     flexWrap: 'wrap',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '18px',
     borderBottom: '1px solid #e2e8f0',
-    paddingBottom: '18px'
+    paddingBottom: 12
   },
-  heroEyebrow: {
-    textTransform: 'uppercase',
-    letterSpacing: '0.12em',
-    fontSize: '0.75rem',
+  resultTab: {
+    padding: '8px 16px',
+    borderRadius: 999,
+    border: '1px solid transparent',
+    background: '#f1f5f9',
+    color: '#334155',
     fontWeight: 600,
-    color: '#94a3b8'
+    fontSize: '0.9rem',
+    cursor: 'pointer'
   },
-  heroTitle: {
-    margin: '6px 0 0',
-    fontSize: '1.9rem',
-    lineHeight: 1.25,
+  resultTabActive: {
+    background: '#0f172a',
+    color: '#ffffff',
+    border: '1px solid #0f172a'
+  },
+  resultTabDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed'
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: '1.08rem',
     color: '#0f172a'
-  },
-  heroMeta: {
-    display: 'flex',
-    gap: '12px',
-    alignItems: 'center'
-  },
-  sentimentBadge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    fontWeight: 600,
-    fontSize: '0.85rem',
-    padding: '8px 12px',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderStyle: 'solid'
-  },
-  metaPill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '8px 12px',
-    borderRadius: 999,
-    border: '1px solid #cbd5f5',
-    background: '#eef2ff',
-    color: '#312e81',
-    fontWeight: 600,
-    fontSize: '0.85rem'
-  },
-  summaryStack: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '18px'
   },
   sectionCard: {
     background: '#f9fafb',
@@ -522,106 +841,42 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'column',
     gap: '12px'
   },
-  sectionHeader: {
+  generatedNote: {
+    margin: '0 0 16px',
+    color: '#5b6470',
+    fontSize: '0.9rem'
+  },
+  editHeader: {
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: '12px'
+    gap: 12,
+    flexWrap: 'wrap'
   },
-  sectionTitle: {
-    margin: 0,
-    fontSize: '1.08rem',
-    color: '#0f172a'
-  },
-  markdown: {
-    fontSize: '0.95rem',
-    lineHeight: 1.6,
-    color: '#1f2937'
-  },
-  actionSection: {
-    background: '#f5f8ff',
-    borderRadius: 22,
-    padding: '24px',
-    boxShadow: 'inset 0 0 0 1px #dbeafe',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px'
-  },
-  actionGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-    gap: '16px'
-  },
-  actionCard: {
-    borderRadius: 18,
-    padding: '18px',
+  editorShell: {
     background: '#ffffff',
-    boxShadow: '0 16px 36px rgba(15, 23, 42, 0.12)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px'
-  },
-  actionHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  actionIndex: {
-    fontSize: '0.85rem',
-    fontWeight: 700,
-    color: '#94a3b8'
-  },
-  priorityBadge: {
-    fontWeight: 700,
-    fontSize: '0.75rem',
-    borderRadius: 999,
-    padding: '4px 10px'
-  },
-  actionTask: {
-    margin: 0,
-    fontSize: '1.05rem',
-    color: '#0f172a',
-    lineHeight: 1.4
-  },
-  actionMeta: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px'
-  },
-  ownerPill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '6px 10px',
-    borderRadius: 999,
-    background: '#e2e8f0',
-    color: '#1e293b',
-    fontWeight: 600,
-    fontSize: '0.8rem'
-  },
-  dueChip: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '6px 10px',
-    borderRadius: 999,
-    background: '#f1f5f9',
-    color: '#334155',
-    fontWeight: 500,
-    fontSize: '0.8rem'
-  },
-  schemaDetails: {
-    background: '#f8fafc',
+    padding: '20px',
     borderRadius: 20,
-    padding: '14px 18px',
-    boxShadow: '0 4px 20px rgba(15, 23, 42, 0.08)'
+    boxShadow: 'inset 0 0 0 1px #e2e8f0'
   },
-  schemaPreview: {
-    marginTop: 14,
-    background: '#ffffff',
-    padding: '16px',
+  unregisteredPanel: {
+    background: '#fff7ed',
     borderRadius: 16,
-    boxShadow: 'inset 0 0 0 1px #e2e8f0',
-    maxHeight: 360,
-    overflowY: 'auto'
+    padding: '14px 18px',
+    border: '1px solid #fed7aa'
+  },
+  unregisteredRow: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    marginTop: 8
+  },
+  unregisteredInput: {
+    flex: 1,
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: '1px solid #fed7aa',
+    fontSize: '0.9rem'
   }
 };
 

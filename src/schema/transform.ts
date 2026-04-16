@@ -51,7 +51,7 @@ export function diffSchemaData<Definition extends SchemaDefinition>(
   previous: SchemaOutput<Definition>,
   next: SchemaOutput<Definition>
 ): DiffResult {
-  const definition = schema.getDefinition();
+  const definition = schema.definition;
   const added: DiffChange[] = [];
   const removed: DiffChange[] = [];
   const changed: DiffChange[] = [];
@@ -134,7 +134,7 @@ export function mergeSchemaData<Definition extends SchemaDefinition>(
   updates: Partial<SchemaOutput<Definition>>,
   options: MergeOptions = {}
 ): SchemaOutput<Definition> {
-  const definition = schema.getDefinition();
+  const definition = schema.definition;
 
   function mergeField(
     fieldDef: SchemaDefinition[string],
@@ -225,7 +225,7 @@ export function searchSchemaData<Definition extends SchemaDefinition>(
   query: string,
   options: SearchOptions = {}
 ): SearchResult[] {
-  const definition = schema.getDefinition();
+  const definition = schema.definition;
   const caseSensitive = options.caseSensitive ?? false;
   const results: SearchResult[] = [];
 
@@ -301,7 +301,7 @@ export function extractEntities<Definition extends SchemaDefinition>(
   data: SchemaOutput<Definition>,
   filterType?: string
 ): EntityRecord[] {
-  const definition = schema.getDefinition();
+  const definition = schema.definition;
   const results: EntityRecord[] = [];
 
   function visit(field: SchemaDefinition[string], value: unknown, path: string) {
@@ -359,7 +359,7 @@ export function collectMarkdownFields<Definition extends SchemaDefinition>(
   schema: Schema<Definition>,
   data: SchemaOutput<Definition>
 ): MarkdownFieldRecord[] {
-  const definition = schema.getDefinition();
+  const definition = schema.definition;
   const records: MarkdownFieldRecord[] = [];
 
   function visit(field: SchemaDefinition[string], value: unknown, path: string) {

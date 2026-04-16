@@ -3,20 +3,14 @@ import type { BaseFieldOptions, ParseIssue } from './types';
 export type DetermineOptional<O extends BaseFieldOptions> =
   O['optional'] extends true
     ? true
-    : O['required'] extends true
-      ? false
-      : O['required'] extends false
-        ? true
-        : 'default' extends keyof O
-          ? Exclude<O['default'], undefined> extends never
-            ? false
-            : true
-          : false;
+    : 'default' extends keyof O
+      ? Exclude<O['default'], undefined> extends never
+        ? false
+        : true
+      : false;
 
 export function resolveOptional(options: BaseFieldOptions): boolean {
   if (options.optional === true) return true;
-  if (options.required === true) return false;
-  if (options.required === false) return true;
   return 'default' in options && (options as Record<string, unknown>).default !== undefined;
 }
 

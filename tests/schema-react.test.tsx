@@ -4,7 +4,6 @@ import { renderToString } from 'react-dom/server';
 import {
   SchemaEditor,
   SchemaRenderer,
-  generateEditForm,
   useSchemaValidation,
   defineSchema,
   text,
@@ -78,7 +77,7 @@ describe('React helpers', () => {
     expect(html).toContain('&quot;success&quot;:true');
   });
 
-  test('generateEditForm restricts fields and renders editors', () => {
+  test('SchemaEditor respects hiddenFields config', () => {
     const data = {
       title: 'Launch Notes',
       summary: 'Draft',
@@ -86,13 +85,14 @@ describe('React helpers', () => {
       contributors: [{ name: 'alice', active: true }]
     };
 
-    const form = generateEditForm(DemoSchema, {
-      value: data,
-      onChange: () => void 0,
-      fields: ['title', 'tags']
-    });
-
-    const html = renderToString(form);
+    const html = renderToString(
+      <SchemaEditor
+        schema={DemoSchema}
+        data={data}
+        onChange={() => void 0}
+        config={{ hiddenFields: ['summary', 'contributors'] }}
+      />
+    );
     expect(html).toContain('Title');
     expect(html).toContain('select');
     expect(html).not.toContain('Contributors');

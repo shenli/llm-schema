@@ -2,6 +2,8 @@ import {
   type AnthropicToolOptions,
   type JsonSchema,
   type OpenAIToolOptions,
+  type ParseWithRepairResult,
+  type PartialSchemaOutput,
   type SchemaDefinition,
   type SchemaOptions,
   type SchemaOutput,
@@ -10,6 +12,13 @@ import {
   SchemaError
 } from './types';
 import { parseRoot } from './validation';
+import { parsePartialDefinition } from './partial';
+import { repairJsonString } from './repair';
+import {
+  buildStandardProps,
+  type StandardSchemaV1,
+  type StandardSchemaV1Interface
+} from './standardSchema';
 import { definitionToJsonSchema, toAnthropicToolSchema, toOpenAIToolSchema } from './exporters';
 import {
   diffSchemaData,
@@ -36,13 +45,18 @@ import {
   isTextField
 } from './typeGuards';
 
-export interface Schema<Definition extends SchemaDefinition> {
+export interface Schema<Definition extends SchemaDefinition>
+  extends StandardSchemaV1Interface<unknown, SchemaOutput<Definition>> {
   readonly definition: Definition;
   readonly options: Required<SchemaOptions>;
+  readonly '~standard': StandardSchemaV1.Props<unknown, SchemaOutput<Definition>>;
 
   parse(input: unknown): SchemaOutput<Definition>;
   safeParse(input: unknown): SchemaValidationResult<SchemaOutput<Definition>>;
-  validate(input: unknown): SchemaValidationResult<SchemaOutput<Definition>>;
+  safeParsePartial(
+    input: unknown
+  ): SchemaValidationResult<PartialSchemaOutput<Definition>>;
+  parseWithRepair(input: unknown): ParseWithRepairResult<SchemaOutput<Definition>>;
   toPrompt(options?: SchemaPromptOptions): string;
   toJsonSchema(): JsonSchema;
   toOpenAITool(options?: OpenAIToolOptions): ReturnType<typeof toOpenAIToolSchema>;
@@ -56,7 +70,6 @@ export interface Schema<Definition extends SchemaDefinition> {
   search(data: SchemaOutput<Definition>, query: string, options?: SearchOptions): SearchResult[];
   getEntities(data: SchemaOutput<Definition>, type?: string): EntityRecord[];
   getMarkdownFields(data: SchemaOutput<Definition>): MarkdownFieldRecord[];
-  getDefinition(): Definition;
 }
 
 type SchemaConfig = SchemaOptions;
@@ -66,7 +79,7 @@ function normalizeOptions(options?: SchemaOptions): Required<SchemaOptions> {
     name: options?.name ?? 'Schema',
     description: options?.description ?? '',
     version: options?.version ?? '1.0.0',
-    strict: options?.strict ?? false,
+    strict: options?.strict ?? true,
     examples: options?.examples ?? []
   };
 }
@@ -383,6 +396,13 @@ export function defineSchema<const Definition extends SchemaDefinition>(
   const schema: Schema<Definition> = {
     definition,
     options: normalized,
+    '~standard': buildStandardProps<Definition>(normalized.name, (value) => {
+      const normalizedInput = normalizeInput(value);
+      if (!normalizedInput.success) {
+        return normalizedInput as SchemaValidationResult<SchemaOutput<Definition>>;
+      }
+      return parseRoot(definition, normalizedInput.data, normalized);
+    }),
 
     parse(input: unknown) {
       const result = this.safeParse(input);
@@ -401,8 +421,59 @@ export function defineSchema<const Definition extends SchemaDefinition>(
       return parseRoot(definition, normalizedInput.data, normalized);
     },
 
-    validate(input: unknown) {
-      return this.safeParse(input);
+    safeParsePartial(input: unknown) {
+      const normalizedInput = normalizeInput(input);
+      if (!normalizedInput.success) {
+        return normalizedInput as SchemaValidationResult<PartialSchemaOutput<Definition>>;
+      }
+      const result = parsePartialDefinition(definition, normalizedInput.data, [], {
+        strict: normalized.strict
+      });
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data as PartialSchemaOutput<Definition>
+        };
+      }
+      return result as SchemaValidationResult<PartialSchemaOutput<Definition>>;
+    },
+
+    parseWithRepair(input: unknown) {
+      if (typeof input !== 'string') {
+        const direct = this.safeParse(input);
+        return {
+          success: direct.success,
+          data: direct.success ? direct.data : undefined,
+          issues: direct.success ? [] : direct.issues,
+          repairSteps: []
+        };
+      }
+
+      const repair = repairJsonString(input);
+      if ('error' in repair) {
+        return {
+          success: false,
+          issues: [
+            {
+              path: [],
+              message: `Could not repair JSON: ${repair.error}`,
+              code: 'invalid_format',
+              expected: 'json_object',
+              received: input
+            }
+          ],
+          repairSteps: repair.steps
+        };
+      }
+
+      const direct = this.safeParse(repair.repaired);
+      return {
+        success: direct.success,
+        data: direct.success ? direct.data : undefined,
+        issues: direct.success ? [] : direct.issues,
+        repairSteps: repair.steps,
+        repairedSource: repair.repaired
+      };
     },
 
     toPrompt(promptOptions: SchemaPromptOptions = {}) {
@@ -464,10 +535,6 @@ export function defineSchema<const Definition extends SchemaDefinition>(
 
     getMarkdownFields(data) {
       return collectMarkdownFields(this, data);
-    },
-
-    getDefinition() {
-      return definition;
     }
   };
 

@@ -1,18 +1,37 @@
-export { SchemaRenderer, SchemaField, SchemaEditor } from './components';
+export {
+  SchemaRenderer,
+  SchemaField,
+  SchemaEditor
+} from './components';
 export type {
   SchemaRendererProps,
   RendererComponents,
   RendererConfig,
-  RendererStyles,
   SchemaFieldProps,
-  SchemaEditorProps
+  SchemaEditorProps,
+  RendererStyles,
+  RendererClassNames
 } from './components';
+
+export { stylePresets, mergeRendererStyles } from './styles';
 
 export { MarkdownField } from './MarkdownField';
 export type { MarkdownFieldProps } from './MarkdownField';
 
-export { useSchemaData, useSchemaValidation } from './hooks';
-export type { SchemaDataState } from './hooks';
+export { useSchemaData, useSchemaValidation, useStreamingSchema } from './hooks';
+export type {
+  SchemaDataState,
+  UseStreamingSchemaOptions,
+  UseStreamingSchemaResult
+} from './hooks';
 
-export { generateEditForm } from './editForm';
-export type { GenerateEditFormOptions } from './editForm';
+export { SchemaDiff } from './SchemaDiff';
+export type { SchemaDiffProps } from './SchemaDiff';
+
+export {
+  EntityProvider,
+  useEntityResolver,
+  useEntity,
+  useEntitiesOfType
+} from './EntityProvider';
+export type { Entity, EntityResolver, EntityProviderProps } from './EntityProvider';

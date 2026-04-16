@@ -1,8 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { OpenAI } from 'openai';
-import { MeetingNotesSchema } from '../schema';
+import { streamObject, generateText, jsonSchema } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
+import { MeetingNotesSchema, type MeetingNotes } from '../schema';
+
+// AI SDK 6 takes Zod or its own Schema wrapper. Wrap our JSON Schema output:
+// `jsonSchema()` expects JSONSchema7; our toJsonSchema output is a compatible subset.
+const aiSchema = jsonSchema<MeetingNotes>(
+  MeetingNotesSchema.toJsonSchema() as unknown as Parameters<typeof jsonSchema>[0]
+);
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
@@ -14,107 +21,97 @@ const openaiApiKey = process.env.OPENAI_API_KEY;
 
 if (!openaiApiKey) {
   console.warn(
-    '⚠️  OPENAI_API_KEY is not set. Requests to /api/analyze will return an error until you provide a key.'
+    '⚠️  OPENAI_API_KEY is not set. Requests will error until you provide a key.'
   );
 }
 
-const client = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
+const openai = openaiApiKey ? createOpenAI({ apiKey: openaiApiKey }) : null;
 
 const systemPrompt = `
-You are an expert meeting scribe. Produce structured meeting notes that follow the provided schema exactly.
-Capture the main ideas, decisions, and action items. Use markdown (headings, bullet lists) in the rich text fields.
-If information is missing, leave the field empty or omit optional items.
+You are an expert meeting scribe. Produce structured meeting notes from the user's transcript.
+Capture the main ideas, decisions, and action items. Use markdown (headings, bullet lists) in the
+rich-text fields (summary / highlights / followUps). If information is missing, leave that field empty.
 `.trim();
 
-const schemaPrompt = MeetingNotesSchema.toPrompt({ structure: 'json' });
-
+/**
+ * Structured streaming endpoint — uses Vercel AI SDK's `streamObject` with the
+ * llm-schema definition as Standard Schema v1. The model provider enforces the
+ * schema at the token level, so the client can render partial fields as they arrive.
+ */
 app.post('/api/analyze', async (req, res) => {
-  if (!client) {
-    res.status(500).json({
-      success: false,
-      issues: [
-        {
-          path: ['apiKey'],
-          code: 'missing_api_key',
-          message: 'OPENAI_API_KEY is not configured on the server.'
-        }
-      ]
-    });
+  if (!openai) {
+    res.status(500).json({ error: 'OPENAI_API_KEY is not configured on the server.' });
     return;
   }
 
   const transcript: unknown = req.body?.transcript;
-
   if (typeof transcript !== 'string' || transcript.trim().length === 0) {
-    res.status(400).json({
-      success: false,
-      issues: [
-        {
-          path: ['transcript'],
-          code: 'invalid_input',
-          message: 'Provide a non-empty transcript in the request body.'
-        }
-      ]
-    });
+    res.status(400).json({ error: 'Provide a non-empty transcript in the request body.' });
     return;
   }
 
   try {
-    const userPrompt = [
-      'Here is the schema you must follow:',
-      schemaPrompt,
-      '',
-      'Meeting transcript:',
-      transcript
-    ].join('\n');
-
-    const completion = await client.chat.completions.create({
-      model: 'gpt-5-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      response_format: { type: 'json_object' },
-      max_completion_tokens: 5000
+    const result = streamObject({
+      model: openai('gpt-4o-mini'),
+      schema: aiSchema,
+      system: systemPrompt,
+      prompt: transcript
     });
-
-    const raw = completion.choices[0]?.message?.content ?? '{}';
-    const parsedJson = JSON.parse(raw);
-    const result = MeetingNotesSchema.safeParse(parsedJson);
-
-    if (!result.success) {
-      res.status(422).json({
-        success: false,
-        issues: result.issues,
-        raw
-      });
-      return;
-    }
-
-    res.json({
-      success: true,
-      data: result.data,
-      prompt: schemaPrompt
-    });
+    result.pipeTextStreamToResponse(res);
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      success: false,
-      issues: [
-        {
-          path: ['openai'],
-          code: 'llm_error',
-          message: error instanceof Error ? error.message : 'Unknown error'
-        }
-      ]
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
-app.get('/api/prompt', (_req, res) => {
-  res.json({
-    prompt: schemaPrompt
-  });
+/**
+ * Legacy endpoint — returns raw text. No schema enforcement, on purpose.
+ * The model is asked (via prompt) to emit JSON in a markdown code fence,
+ * optionally with a short preamble. The client feeds the result to
+ * `schema.parseWithRepair()`, which strips the fence, extracts the JSON,
+ * and fixes common JSON mistakes before validating.
+ *
+ * This simulates working with weaker/self-hosted models that don't support
+ * structured outputs or tool calling.
+ */
+app.post('/api/analyze-legacy', async (req, res) => {
+  if (!openai) {
+    res.status(500).json({ error: 'OPENAI_API_KEY is not configured on the server.' });
+    return;
+  }
+
+  const transcript: unknown = req.body?.transcript;
+  if (typeof transcript !== 'string' || transcript.trim().length === 0) {
+    res.status(400).json({ error: 'Provide a non-empty transcript in the request body.' });
+    return;
+  }
+
+  const schemaHint = MeetingNotesSchema.toPrompt({ structure: 'json' });
+
+  try {
+    const { text } = await generateText({
+      model: openai('gpt-4o-mini'),
+      system: systemPrompt,
+      prompt: [
+        'Produce meeting notes in JSON, wrapped in a ```json code fence. Follow this schema shape:',
+        schemaHint,
+        '',
+        'You may include a one-line preamble before the code fence.',
+        '',
+        'Transcript:',
+        transcript
+      ].join('\n')
+    });
+
+    res.json({ raw: text });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 app.listen(port, () => {

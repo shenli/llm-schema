@@ -1,6 +1,6 @@
 {
   "name": "llm-schema-meeting-notes-example",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,11 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/react": "^2.0.0",
+    "ai": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "llm-schema": "file:../..",
-    "openai": "^4.47.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

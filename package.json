@@ -1,7 +1,8 @@
 {
   "name": "llm-schema",
-  "version": "0.1.2",
-  "description": "The ORM for LLM content. Type-safe schemas, validation, and prompt utilities for LLM-native apps.",
+  "version": "0.3.0",
+  "description": "UI-aware schema toolkit for LLM output: schema, prompt, validation, repair, React renderer/editor/diff, Standard Schema v1.",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -10,13 +11,11 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js"
     },
     "./react": {
       "types": "./dist/react/index.d.ts",
-      "import": "./dist/react/index.js",
-      "require": "./dist/react/index.js"
+      "import": "./dist/react/index.js"
     },
     "./package.json": "./package.json"
   },

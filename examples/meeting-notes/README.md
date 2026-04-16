@@ -1,52 +1,69 @@
-# Meeting Notes Example App
+# Meeting Notes Example App (llm-schema 0.3)
 
-This sample shows the full llm-schema workflow end to end:
+This app is the fully-runnable showcase for `llm-schema`. It demonstrates every job a real production LLM app has to do, all driven by a single `MeetingNotesSchema` definition.
 
-1. Define the schema once (`schema.ts`).
-2. Generate prompt/tool instructions from that schema on the server.
-3. Call OpenAI (`gpt-5-mini`) with your meeting transcript.
-4. Validate and parse the response with `safeParse()`.
-5. Render the structured data in React with a polished UI + a collapsible `<SchemaRenderer />` view.
+## What it demonstrates
+
+| Feature | Where to see it |
+|---|---|
+| **Structured streaming** via Vercel AI SDK | Pipeline picker → *Structured streaming* · watch fields fill in live |
+| **`parseWithRepair()`** for weak / non-structured models | Pipeline picker → *Legacy + repair* · the repair panel shows every step |
+| **Zero-code rendering** via `<SchemaRenderer />` | Result tab → *Generated (zero custom code)* |
+| **Custom UI alongside the same schema** | Result tab → *Polished* (~300 lines of bespoke JSX rendering the same data) |
+| **`<SchemaEditor />` with real nested editing** | Result tab → *Edit* · arrays have add / remove / reorder |
+| **`<SchemaDiff />` after edits** | Result tab → *Edit* · side-by-side diff vs. original |
+| **`<EntityProvider />` + dynamic registration** | Edit tab — unknown owner ids surface a "Register as…" panel |
+| **Schema Inspector** — the same schema as prompt / JSON Schema / OpenAI tool / Anthropic tool | Collapsible panel at the bottom of the page |
+| **Invalid-output simulation** | Edit tab → *Simulate invalid output* button strips a required field |
+
+## Why two pipelines?
+
+- **Structured streaming** is the default production path: the provider enforces the schema at the token level, validation almost never fails, the UI streams partial fields.
+- **Legacy + repair** simulates weaker models that return raw JSON with code fences and prose preambles. `schema.parseWithRepair()` strips fences, extracts JSON from prose, fixes trailing commas, and reports every repair step. This is the fallback your app wants when someone swaps in a self-hosted or older model.
+
+## Why the "Polished vs Generated" split?
+
+The *Generated* tab renders the same data with three lines: `<SchemaRenderer schema={...} data={...} />`. The *Polished* tab renders it with ~300 lines of handcrafted JSX. Switch between them — the baseline is free; the polish is opt-in. That's the actual value proposition.
 
 ## Getting started
 
 ```bash
 cd examples/meeting-notes
-cp .env.example .env        # add your OPENAI_API_KEY
-npm install                 # links llm-schema from the repo root
+cp .env.example .env        # add OPENAI_API_KEY
+npm install                 # installs AI SDK + links llm-schema from the repo root
 npm run dev                 # runs API (Express) + Vite dev server
 ```
 
-Open http://localhost:5173 to try it out. The Express API runs on http://localhost:8787 and is proxied by Vite.
+Open <http://localhost:5173>. The Express API runs on <http://localhost:8787>; Vite proxies it.
 
-> ℹ️ Make sure the library is built (`npm run build` from the repo root) so the example resolves the local `llm-schema` package.
+> Make sure the library is built (`npm run build` from the repo root) so the example resolves the local `llm-schema` package. If you're iterating on the library, run `npx tsc --watch` in the root.
 
-## What it demonstrates
-
-- **Single source of truth**: `MeetingNotesSchema` powers the prompt instructions, the OpenAI call, parsing, and the React renderer.
-- **Markdown + structured fields**: action items use strictly typed fields, while narrative sections use `md()` so the LLM can respond with rich formatting.
-- **Helpful validation**: if the LLM drifts, you’ll see field-level issues on the left panel. The schema descriptions automatically show up in the prompt inspector panel.
-- **Instant UI + product polish**: a bespoke meeting-notes layout renders markdown, badges, and action-item cards, and a collapsible `<SchemaRenderer />` panel shows what the auto-generated view looks like.
-
-## Project structure
+## Files
 
 ```
 examples/meeting-notes/
-├── backend/
-│   └── server.ts        # Express API; calls OpenAI and validates with llm-schema
-├── schema.ts            # Shared schema + TypeScript types
+├── backend/server.ts          # /api/analyze (streamObject) and /api/analyze-legacy (generateText)
+├── schema.ts                  # shared MeetingNotesSchema (single source of truth)
 ├── src/
-│   ├── App.tsx          # React UI that calls /api/analyze and renders the polished view + SchemaRenderer preview
-│   └── main.tsx         # Vite entry point
-├── .env.example         # Environment variables template
-├── package.json         # Local dependencies; `llm-schema` is linked via file:../..
-└── vite.config.ts       # Vite + proxy config
+│   ├── App.tsx                # orchestration: pipeline picker, tabs, repair/edit/diff panels
+│   ├── PolishedView.tsx       # handcrafted custom UI (the "polish" opt-in)
+│   ├── SchemaInspector.tsx    # live view of toPrompt / toJsonSchema / toOpenAITool outputs
+│   └── main.tsx
+├── package.json
+└── vite.config.ts
 ```
+
+## Key files to read for the library pitch
+
+1. **`schema.ts`** — the single source of truth. Six fields; everything else flows from this.
+2. **`backend/server.ts`** — the schema is passed directly to `streamObject`. Ten lines.
+3. **`src/SchemaInspector.tsx`** — same schema, five consumers. Edit `schema.ts` and every tab updates.
+4. **`src/App.tsx`** → `GeneratedView` — renders the entire meeting-notes UI in one line of JSX.
 
 ## Production notes
 
-- Swap `gpt-5-mini` for any OpenAI model (or wire `toOpenAITool()` and the Responses API) without changing the rest of the app.
-- Add persistence by storing the validated `MeetingNotes` payload; the types stay correct because they come from `InferSchema`.
-- Enable human-in-the-loop editing by dropping `<SchemaEditor />` next to the renderer.
+- Swap `openai('gpt-4o-mini')` for any AI SDK provider without touching the schema.
+- Add persistence by storing `edited` server-side; the type stays correct via `InferSchema`.
+- The entity registry can be backed by your real user directory — `<EntityProvider>` accepts a live list or a controlled `{ entities, onChange }`.
 
 Define once. Use everywhere.

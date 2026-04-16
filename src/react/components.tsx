@@ -1,11 +1,10 @@
 import React from 'react';
-import type { CSSProperties } from 'react';
 import type { Schema } from '../schema/builder';
 import type {
   AnyFieldDefinition,
-  ParseIssue,
   SchemaDefinition,
-  SchemaOutput
+  SchemaOutput,
+  PartialSchemaOutput
 } from '../schema/types';
 import {
   isArrayField,
@@ -19,12 +18,23 @@ import {
   isTextField
 } from '../schema/typeGuards';
 import { MarkdownField } from './MarkdownField';
+import {
+  mergeRendererStyles,
+  stylePresets,
+  joinClassNames,
+  type RendererStyles,
+  type RendererClassNames
+} from './styles';
+import { useEntity } from './EntityProvider';
+
+export type { RendererStyles, RendererClassNames };
 
 type FieldComponentProps = {
   value: unknown;
   field: AnyFieldDefinition;
   path: string;
   label: string;
+  partial?: boolean;
 };
 
 type FieldRenderer = (props: FieldComponentProps) => React.ReactNode;
@@ -46,224 +56,15 @@ export interface RendererConfig {
   labelFormatter?: (params: { path: string; field: AnyFieldDefinition }) => string;
   stylePreset?: 'card' | 'plain';
   styles?: Partial<RendererStyles>;
+  classNames?: RendererClassNames;
 }
 
-export interface RendererStyles {
-  container?: CSSProperties;
-  group?: CSSProperties;
-  nestedGroup?: CSSProperties;
-  field?: CSSProperties;
-  nestedField?: CSSProperties;
-  rootLabel?: CSSProperties;
-  nestedLabel?: CSSProperties;
-  label?: CSSProperties;
-  value?: CSSProperties;
-  list?: CSSProperties;
-  listItem?: CSSProperties;
-  listItemHeading?: CSSProperties;
-  listItemBadge?: CSSProperties;
-  missing?: CSSProperties;
-}
-
-const stylePresets: Record<'card' | 'plain', RendererStyles> = {
-  card: {
-    container: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '20px',
-      background: '#ffffff',
-      borderRadius: '20px',
-      padding: '24px',
-      border: '1px solid rgba(226, 232, 240, 0.9)',
-      boxShadow: '0 24px 60px rgba(15, 23, 42, 0.12)'
-    },
-    group: {
-      margin: 0,
-      padding: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '18px'
-    },
-    nestedGroup: {
-      margin: 0,
-      padding: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px'
-    },
-    field: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
-      background: 'rgba(248, 250, 252, 0.9)',
-      borderRadius: '18px',
-      border: '1px solid rgba(226, 232, 240, 0.9)',
-      padding: '16px 18px'
-    },
-    nestedField: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
-      background: '#ffffff',
-      borderRadius: '14px',
-      border: '1px solid rgba(226, 232, 240, 0.8)',
-      padding: '14px'
-    },
-    rootLabel: {
-      fontWeight: 700,
-      color: '#0f172a',
-      fontSize: '1.05rem',
-      textTransform: 'none'
-    },
-    nestedLabel: {
-      fontWeight: 600,
-      color: '#1e293b',
-      fontSize: '0.95rem'
-    },
-    label: {
-      fontWeight: 600,
-      color: '#0f172a',
-      fontSize: '0.95rem'
-    },
-    value: {
-      color: '#1f2937',
-      fontSize: '0.95rem',
-      lineHeight: 1.6,
-      margin: 0
-    },
-    list: {
-      margin: 0,
-      padding: 0,
-      listStyle: 'none',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '14px'
-    },
-    listItem: {
-      background: '#ffffff',
-      borderRadius: '14px',
-      border: '1px solid rgba(226, 232, 240, 0.9)',
-      padding: '16px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px'
-    },
-    listItemHeading: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-      fontSize: '0.85rem',
-      fontWeight: 600,
-      color: '#64748b'
-    },
-    listItemBadge: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 24,
-      height: 24,
-      borderRadius: 999,
-      background: '#eef2ff',
-      color: '#4338ca',
-      fontWeight: 700,
-      fontSize: '0.75rem'
-    },
-    missing: {
-      color: '#94a3b8',
-      fontStyle: 'italic'
-    }
-  },
-  plain: {
-    container: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '16px'
-    },
-    group: {
-      margin: 0,
-      padding: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px'
-    },
-    nestedGroup: {
-      margin: 0,
-      padding: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px'
-    },
-    field: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
-      padding: '4px 0'
-    },
-    nestedField: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '4px',
-      padding: '2px 0'
-    },
-    rootLabel: {
-      fontWeight: 700,
-      color: '#111827',
-      fontSize: '1rem'
-    },
-    nestedLabel: {
-      fontWeight: 600,
-      color: '#111827',
-      fontSize: '0.95rem'
-    },
-    label: {
-      fontWeight: 600,
-      color: '#111827',
-      fontSize: '0.95rem'
-    },
-    value: {
-      color: '#1f2937',
-      fontSize: '0.95rem',
-      lineHeight: 1.6,
-      margin: 0
-    },
-    list: {
-      margin: 0,
-      padding: 0,
-      listStyle: 'none',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px'
-    },
-    listItem: {
-      padding: '0 0 8px',
-      borderBottom: '1px solid rgba(209, 213, 219, 0.5)'
-    },
-    listItemHeading: {
-      fontWeight: 600,
-      color: '#6b7280',
-      fontSize: '0.85rem',
-      marginBottom: '6px'
-    },
-    missing: {
-      color: '#6b7280',
-      fontStyle: 'italic'
-    }
+function EntityDisplay({ type, id }: { type: string; id: string }) {
+  const entity = useEntity(type, id);
+  if (entity) {
+    return <span>{entity.label}</span>;
   }
-};
-
-function mergeRendererStyles(
-  preset: RendererStyles,
-  overrides?: Partial<RendererStyles>
-): RendererStyles {
-  if (!overrides) return preset;
-  const merged: RendererStyles = { ...preset };
-  (Object.keys(overrides) as (keyof RendererStyles)[]).forEach((key) => {
-    const override = overrides[key];
-    if (override) {
-      merged[key] = { ...(preset[key] ?? {}), ...override };
-    }
-  });
-  return merged;
+  return <code>{id}</code>;
 }
 
 const defaultComponents: RendererComponents = {
@@ -285,7 +86,12 @@ const defaultComponents: RendererComponents = {
     return <span>{String(value ?? '')}</span>;
   },
   enum: ({ value }) => <span>{String(value ?? '')}</span>,
-  entity: ({ value }) => <code>{String(value ?? '')}</code>
+  entity: ({ value, field }) => {
+    const id = String(value ?? '');
+    if (!id) return null;
+    if (!isEntityField(field)) return <code>{id}</code>;
+    return <EntityDisplay type={field.entityType} id={id} />;
+  }
 };
 
 function formatLabel(key: string) {
@@ -298,6 +104,25 @@ function isHidden(path: string, config?: RendererConfig) {
   return config.hiddenFields.some((hidden) => path === hidden || path.startsWith(`${hidden}.`));
 }
 
+function Pending({
+  styles,
+  classNames
+}: {
+  styles: RendererStyles;
+  classNames?: RendererClassNames;
+}) {
+  return (
+    <span
+      className={joinClassNames('llm-schema-pending', classNames?.pending)}
+      style={styles.pending}
+      aria-busy="true"
+      aria-live="polite"
+    >
+      {'\u00a0'}
+    </span>
+  );
+}
+
 function renderFieldValue(
   field: AnyFieldDefinition,
   value: unknown,
@@ -305,30 +130,40 @@ function renderFieldValue(
   components: RendererComponents,
   config: RendererConfig | undefined,
   styles: RendererStyles,
-  depth: number
+  depth: number,
+  partial: boolean
 ): React.ReactNode {
   const label =
     config?.labelFormatter?.({ path, field }) ??
     formatLabel(path.split('.').slice(-1)[0] ?? path);
-  const fieldStyle =
-    depth === 0
-      ? styles.field
-      : styles.nestedField ?? styles.field;
+  const fieldStyle = depth === 0 ? styles.field : styles.nestedField ?? styles.field;
   const labelStyle =
-    depth === 0
-      ? styles.rootLabel ?? styles.label
-      : styles.nestedLabel ?? styles.label ?? undefined;
+    depth === 0 ? styles.rootLabel ?? styles.label : styles.nestedLabel ?? styles.label ?? undefined;
+  const classNames = config?.classNames;
+  const fieldClass = joinClassNames(
+    'llm-schema-field',
+    depth === 0 ? classNames?.field : classNames?.nestedField ?? classNames?.field
+  );
+  const labelClass = joinClassNames(
+    depth === 0 ? classNames?.rootLabel ?? classNames?.label : classNames?.nestedLabel ?? classNames?.label
+  );
+
+  const valueIsMissing = value === undefined || value === null;
 
   const renderPrimitive = (kind: keyof RendererComponents) => (
     <div
-      className="llm-schema-field"
+      className={fieldClass}
       data-kind={kind}
       data-path={path}
       style={fieldStyle}
     >
-      <dt style={labelStyle}>{label}</dt>
-      <dd style={styles.value}>
-        {components[kind]?.({ value, field, path, label })}
+      <dt style={labelStyle} className={labelClass}>{label}</dt>
+      <dd style={styles.value} className={joinClassNames(classNames?.value)}>
+        {partial && valueIsMissing ? (
+          <Pending styles={styles} classNames={classNames} />
+        ) : (
+          components[kind]?.({ value, field, path, label, partial })
+        )}
       </dd>
     </div>
   );
@@ -345,23 +180,43 @@ function renderFieldValue(
     const items = Array.isArray(value) ? value : [];
     return (
       <div
-        className="llm-schema-field"
+        className={fieldClass}
         data-kind="array"
         data-path={path}
         style={fieldStyle}
       >
-        <dt style={styles.label}>{label}</dt>
-        <dd style={styles.value}>
+        <dt style={styles.label} className={joinClassNames(classNames?.label)}>
+          {label}
+        </dt>
+        <dd style={styles.value} className={joinClassNames(classNames?.value)}>
           {items.length === 0 ? (
-            <em style={styles.missing}>No entries</em>
+            partial ? (
+              <Pending styles={styles} classNames={classNames} />
+            ) : (
+              <em style={styles.missing} className={joinClassNames(classNames?.missing)}>
+                No entries
+              </em>
+            )
           ) : (
-            <ol style={styles.list}>
+            <ol style={styles.list} className={joinClassNames('llm-schema-list', classNames?.list)}>
               {items.map((item, index) => (
-                <li key={index} style={styles.listItem}>
+                <li
+                  key={index}
+                  style={styles.listItem}
+                  className={joinClassNames('llm-schema-list-item', classNames?.listItem)}
+                >
                   {styles.listItemHeading && (
-                    <div style={styles.listItemHeading}>
+                    <div
+                      style={styles.listItemHeading}
+                      className={joinClassNames(classNames?.listItemHeading)}
+                    >
                       {styles.listItemBadge ? (
-                        <span style={styles.listItemBadge}>{index + 1}</span>
+                        <span
+                          style={styles.listItemBadge}
+                          className={joinClassNames(classNames?.listItemBadge)}
+                        >
+                          {index + 1}
+                        </span>
                       ) : (
                         <strong>#{index + 1}</strong>
                       )}
@@ -375,7 +230,8 @@ function renderFieldValue(
                     components,
                     config,
                     styles,
-                    depth + 1
+                    depth + 1,
+                    partial
                   )}
                 </li>
               ))}
@@ -389,13 +245,13 @@ function renderFieldValue(
   if (isObjectField(field)) {
     return (
       <div
-        className="llm-schema-field"
+        className={fieldClass}
         data-kind="object"
         data-path={path}
         style={fieldStyle}
       >
-        <dt style={labelStyle}>{label}</dt>
-        <dd style={styles.value}>
+        <dt style={labelStyle} className={labelClass}>{label}</dt>
+        <dd style={styles.value} className={joinClassNames(classNames?.value)}>
           {renderNestedFields(
             field.shape,
             (value && typeof value === 'object' ? (value as Record<string, unknown>) : {}) ?? {},
@@ -403,7 +259,8 @@ function renderFieldValue(
             components,
             config,
             styles,
-            depth + 1
+            depth + 1,
+            partial
           )}
         </dd>
       </div>
@@ -420,7 +277,8 @@ function renderNestedFields(
   components: RendererComponents,
   config: RendererConfig | undefined,
   styles: RendererStyles,
-  depth = 0
+  depth = 0,
+  partial = false
 ) {
   const entries = Object.entries(definition);
   if (entries.length === 0) {
@@ -429,10 +287,14 @@ function renderNestedFields(
 
   const record: Record<string, unknown> =
     data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const classNames = config?.classNames;
 
   return (
     <dl
-      className="llm-schema-group"
+      className={joinClassNames(
+        'llm-schema-group',
+        depth === 0 ? classNames?.group : classNames?.nestedGroup ?? classNames?.group
+      )}
       style={depth === 0 ? styles.group : styles.nestedGroup ?? styles.group}
     >
       {entries.map(([key, childField]) => {
@@ -443,20 +305,30 @@ function renderNestedFields(
           return null;
         }
 
-        if (value === undefined && !config?.showOptionalFields && childField.optional) {
+        if (value === undefined && !config?.showOptionalFields && childField.optional && !partial) {
           return null;
         }
 
-        if (value === undefined && config?.showOptionalFields) {
+        if (value === undefined && config?.showOptionalFields && !partial) {
+          const fieldStyle = depth === 0 ? styles.field : styles.nestedField ?? styles.field;
           return (
             <div
               key={path}
-              className="llm-schema-field llm-schema-field--missing"
+              className={joinClassNames(
+                'llm-schema-field',
+                'llm-schema-field--missing',
+                classNames?.missing
+              )}
               data-path={path}
-              style={depth === 0 ? styles.field : styles.nestedField ?? styles.field}
+              style={fieldStyle}
             >
-              <dt style={styles.label}>{formatLabel(key)}</dt>
-              <dd style={{ ...(styles.value ?? {}), ...(styles.missing ?? {}) }}>
+              <dt style={styles.label} className={joinClassNames(classNames?.label)}>
+                {formatLabel(key)}
+              </dt>
+              <dd
+                style={{ ...(styles.value ?? {}), ...(styles.missing ?? {}) }}
+                className={joinClassNames(classNames?.value, classNames?.missing)}
+              >
                 Not provided
               </dd>
             </div>
@@ -465,7 +337,7 @@ function renderNestedFields(
 
         return (
           <React.Fragment key={path}>
-            {renderFieldValue(childField, value, path, components, config, styles, depth)}
+            {renderFieldValue(childField, value, path, components, config, styles, depth, partial)}
           </React.Fragment>
         );
       })}
@@ -475,10 +347,11 @@ function renderNestedFields(
 
 export interface SchemaRendererProps<Definition extends SchemaDefinition> {
   schema: Schema<Definition>;
-  data: SchemaOutput<Definition>;
+  data: SchemaOutput<Definition> | PartialSchemaOutput<Definition>;
   components?: Partial<RendererComponents>;
   config?: RendererConfig;
   markdownRenderer?: (content: string) => React.ReactNode;
+  partial?: boolean;
 }
 
 export function SchemaRenderer<Definition extends SchemaDefinition>({
@@ -486,7 +359,8 @@ export function SchemaRenderer<Definition extends SchemaDefinition>({
   data,
   components,
   config,
-  markdownRenderer
+  markdownRenderer,
+  partial = false
 }: SchemaRendererProps<Definition>) {
   const styles = React.useMemo(
     () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'card'], config?.styles),
@@ -505,15 +379,23 @@ export function SchemaRenderer<Definition extends SchemaDefinition>({
 
   return (
     <div
-      className={[
+      className={joinClassNames(
         'llm-schema-renderer',
-        config?.layout ? `llm-schema-renderer--${config.layout}` : null
-      ]
-        .filter(Boolean)
-        .join(' ')}
+        config?.layout ? `llm-schema-renderer--${config.layout}` : null,
+        config?.classNames?.container
+      )}
       style={styles.container}
     >
-      {renderNestedFields(schema.getDefinition(), data, '', mergedComponents, config, styles)}
+      {renderNestedFields(
+        schema.definition,
+        data,
+        '',
+        mergedComponents,
+        config,
+        styles,
+        0,
+        partial
+      )}
     </div>
   );
 }
@@ -524,6 +406,7 @@ export interface SchemaFieldProps {
   path?: string;
   components?: Partial<RendererComponents>;
   config?: RendererConfig;
+  partial?: boolean;
 }
 
 export function SchemaField({
@@ -531,7 +414,8 @@ export function SchemaField({
   value,
   path = field.kind,
   components,
-  config
+  config,
+  partial = false
 }: SchemaFieldProps) {
   const styles = React.useMemo(
     () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'card'], config?.styles),
@@ -544,309 +428,15 @@ export function SchemaField({
   };
 
   return (
-    <dl className="llm-schema-fieldset" style={styles.group}>
-      {renderFieldValue(field, value, path, mergedComponents, config, styles, 0)}
+    <dl
+      className={joinClassNames('llm-schema-fieldset', config?.classNames?.group)}
+      style={styles.group}
+    >
+      {renderFieldValue(field, value, path, mergedComponents, config, styles, 0, partial)}
     </dl>
   );
 }
 
-export interface SchemaEditorProps<Definition extends SchemaDefinition> {
-  schema: Schema<Definition>;
-  data: SchemaOutput<Definition>;
-  onChange: (next: SchemaOutput<Definition>) => void;
-  config?: RendererConfig;
-  disabled?: boolean;
-  validationIssues?: ParseIssue[];
-}
-
-function updatePathValue(source: unknown, path: string[], nextValue: unknown): unknown {
-  if (path.length === 0) return nextValue;
-
-  const [head, ...rest] = path;
-
-  if (Array.isArray(source)) {
-    const index = Number(head);
-    const clone = [...source];
-    clone[index] = updatePathValue(clone[index], rest, nextValue);
-    return clone;
-  }
-
-  const record: Record<string, unknown> =
-    source && typeof source === 'object' ? { ...(source as Record<string, unknown>) } : {};
-
-  record[head] = updatePathValue(record[head], rest, nextValue);
-  return record;
-}
-
-function serializeJson(value: unknown) {
-  return JSON.stringify(value ?? null, null, 2);
-}
-
-export function SchemaEditor<Definition extends SchemaDefinition>({
-  schema,
-  data,
-  onChange,
-  config,
-  disabled,
-  validationIssues
-}: SchemaEditorProps<Definition>) {
-  const definition = schema.getDefinition();
-  const styles = React.useMemo(
-    () => mergeRendererStyles(stylePresets[config?.stylePreset ?? 'plain'], config?.styles),
-    [config?.stylePreset, config?.styles]
-  );
-
-  const handleChange = React.useCallback(
-    (path: string, value: unknown) => {
-      const parts = path.split('.').filter(Boolean);
-      const updated = updatePathValue(data, parts, value) as SchemaOutput<Definition>;
-      onChange(updated);
-    },
-    [data, onChange]
-  );
-
-  const renderInput = (field: AnyFieldDefinition, value: unknown, path: string) => {
-    if (isTextField(field) || isEntityField(field)) {
-      const inputValue = typeof value === 'string' ? value : '';
-      return (
-        <input
-          type="text"
-          disabled={disabled}
-          value={inputValue}
-          onChange={(event) => handleChange(path, event.target.value)}
-        />
-      );
-    }
-
-    if (isMarkdownField(field)) {
-      const inputValue = typeof value === 'string' ? value : '';
-      return (
-        <textarea
-          disabled={disabled}
-          value={inputValue}
-          rows={6}
-          onChange={(event) => handleChange(path, event.target.value)}
-        />
-      );
-    }
-
-    if (isNumberField(field)) {
-      const inputValue = typeof value === 'number' ? value : '';
-      return (
-        <input
-          type="number"
-          disabled={disabled}
-          value={inputValue}
-          onChange={(event) => {
-            const nextRaw = event.target.value;
-            if (nextRaw === '') {
-              handleChange(path, undefined);
-              return;
-            }
-            const next = Number(nextRaw);
-            handleChange(path, Number.isNaN(next) ? undefined : next);
-          }}
-        />
-      );
-    }
-
-    if (isBooleanField(field)) {
-      return (
-        <input
-          type="checkbox"
-          disabled={disabled}
-          checked={Boolean(value)}
-          onChange={(event) => handleChange(path, event.target.checked)}
-        />
-      );
-    }
-
-    if (isDateField(field)) {
-      const format = field.options.format === 'date' ? 'date' : 'datetime-local';
-      const inputValue =
-        value instanceof Date
-          ? field.options.format === 'date'
-            ? value.toISOString().slice(0, 10)
-            : value.toISOString().slice(0, 16)
-          : typeof value === 'string'
-            ? value
-            : '';
-      return (
-        <input
-          type={format}
-          disabled={disabled}
-          value={inputValue}
-          onChange={(event) => {
-            const next = event.target.value;
-            handleChange(path, next ? new Date(next) : undefined);
-          }}
-        />
-      );
-    }
-
-    if (isEnumField(field)) {
-      const selected = typeof value === 'string' ? value : '';
-      return (
-        <select
-          disabled={disabled}
-          value={selected}
-          onChange={(event) => handleChange(path, event.target.value)}
-        >
-          <option value="" disabled>
-            Select…
-          </option>
-          {field.values.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      );
-    }
-
-    if (isArrayField(field) || isObjectField(field)) {
-      return (
-        <textarea
-          disabled={disabled}
-          value={serializeJson(value)}
-          rows={8}
-          onChange={(event) => {
-            try {
-              const parsed = JSON.parse(event.target.value);
-              handleChange(path, parsed);
-            } catch {
-              // ignore parse errors, leave current data intact
-            }
-          }}
-        />
-      );
-    }
-
-    return <input disabled value={String(value ?? '')} onChange={() => undefined} />;
-  };
-
-  const issuesByPath = React.useMemo(() => {
-    if (!validationIssues?.length) {
-      return new Map<string, ParseIssue[]>();
-    }
-    return validationIssues.reduce((map, item) => {
-      const key = item.path.join('.');
-      if (!map.has(key)) {
-        map.set(key, []);
-      }
-      map.get(key)!.push(item);
-      return map;
-    }, new Map<string, ParseIssue[]>());
-  }, [validationIssues]);
-
-  return (
-    <form className={`llm-schema-editor llm-schema-editor--${config?.layout ?? 'stack'}`}>
-      {renderNestedFields(
-        definition,
-        data as Record<string, unknown>,
-        '',
-        {
-          ...defaultComponents,
-          text: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          markdown: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          number: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          boolean: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field llm-schema-editor-field--boolean">
-              <label>
-                <input
-                  type="checkbox"
-                  disabled={disabled}
-                  checked={Boolean(value)}
-                  onChange={(event) => handleChange(fieldPath, event.target.checked)}
-                />
-                <span>{label}</span>
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          date: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          enum: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          ),
-          entity: ({ value, field, path: fieldPath, label }) => (
-            <div className="llm-schema-editor-field">
-              <label>
-                <span>{label}</span>
-                {renderInput(field, value, fieldPath)}
-              </label>
-              {issuesByPath.get(fieldPath)?.map((issue, index) => (
-                <p key={index} className="llm-schema-editor-error">
-                  {issue.message}
-                </p>
-              ))}
-            </div>
-          )
-        },
-        config,
-        styles
-      )}
-    </form>
-  );
-}
+export { defaultComponents, renderNestedFields, renderFieldValue };
+export { SchemaEditor } from './SchemaEditor';
+export type { SchemaEditorProps } from './SchemaEditor';

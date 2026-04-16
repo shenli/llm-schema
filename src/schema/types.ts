@@ -12,7 +12,6 @@ export type FieldKind =
 export interface BaseFieldOptions {
   description?: string;
   optional?: boolean;
-  required?: boolean;
   note?: string;
 }
 
@@ -265,3 +264,23 @@ export type SchemaOutput<Definition extends SchemaDefinition> = Simplify<
   { [K in RequiredKeys<Definition>]: FieldOutput<Definition[K]> } &
     { [K in OptionalKeys<Definition>]?: FieldOutput<Definition[K]> }
 >;
+
+type DeepPartialValue<T> = T extends Array<infer U>
+  ? Array<DeepPartialValue<U>> | undefined
+  : T extends Date
+    ? T | undefined
+    : T extends object
+      ? { [K in keyof T]?: DeepPartialValue<T[K]> }
+      : T | undefined;
+
+export type PartialSchemaOutput<Definition extends SchemaDefinition> = {
+  [K in keyof SchemaOutput<Definition>]?: DeepPartialValue<SchemaOutput<Definition>[K]>;
+};
+
+export interface ParseWithRepairResult<T> {
+  success: boolean;
+  data?: T;
+  issues: ParseIssue[];
+  repairSteps: string[];
+  repairedSource?: string;
+}
